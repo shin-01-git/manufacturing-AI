@@ -1,0 +1,32 @@
+# ===== 비밀 / 보안 (절대 올리면 안 됨) =====
+# OpenAI API 키가 들어있는 파일 — 깃허브에 올라가면 키가 유출됩니다.
+.streamlit/secrets.toml
+
+# ===== 대용량 데이터 (깃허브 100MB 제한 초과) =====
+# 원시 데이터(약 4.57GB)는 올리지 않습니다. 각자 로컬에 두거나 별도 공유.
+traing-dataset/
+*.csv.gz
+
+# 집계본·로그는 코드를 돌리면 다시 생성되므로 올릴 필요 없음(원하면 주석 해제).
+d_aggregated.csv
+*_log.txt
+
+# ===== 파이썬 자동 생성 파일 =====
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# ===== 가상환경 =====
+venv/
+.venv/
+env/
+
+# ===== OS / 에디터 임시 파일 =====
+.DS_Store
+Thumbs.db
+.vscode/
+
+# ===== 임시 테스트 파일 (언더바로 시작하는 실험용) =====
+_*.py
+_*.txt
