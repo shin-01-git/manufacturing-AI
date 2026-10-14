@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-12T16:50:00.137847+00:00",
+  "run_started_at": "2026-10-12T16:32:45.015678+00:00",
+  "elapsed_seconds": 1035.122347800003,
+  "input_path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\data\\rtu_data_full_훈련용.csv",
+  "output_path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\artifacts\\hourly_from_full.parquet",
+  "rows_limit": null,
+  "partial": false,
+  "full_scan": true,
+  "input_scan_partial": false,
+  "rows_processed": 33696013,
+  "valid_rows": 33696013,
+  "encoding": "utf-8-sig",
+  "delimiter": ",",
+  "header": [
+    "module(equipment)",
+    "timestamp",
+    "localtime",
+    "operation",
+    "voltageR",
+    "voltageS",
+    "voltageT",
+    "voltageRS",
+    "voltageST",
+    "voltageTR",
+    "currentR",
+    "currentS",
+    "currentT",
+    "activePower",
+    "powerFactorR",
+    "powerFactorS",
+    "powerFactorT",
+    "reactivePowerLagging",
+    "accumActiveEnergy"
+  ],
+  "columns_used": {
+    "module": "module(equipment)",
+    "localtime": "localtime",
+    "activePower": "activePower"
+  },
+  "time_basis": "localtime (KST)",
+  "timestamp_column_used": false,
+  "aggregation_formula": "sum(activePower * SECONDS_PER_SAMPLE / 3600)",
+  "seconds_per_sample": 5,
+  "activePower_unit": "source activePower scale; no additional 1000 divisor",
+  "complete_n": 720,
+  "complete_only": true,
+  "total_group_count": 46813,
+  "complete_group_count": 46800,
+  "excluded_incomplete_group_count": 13,
+  "error_count": 0,
+  "malformed_row_error_count": 0,
+  "non_numeric_row_count": 0,
+  "invalid_localtime_row_count": 0,
+  "empty_value_row_count": 0,
+  "error_samples": [],
+  "source_immutability": {
+    "length_equal": true,
+    "last_write_time_equal": true,
+    "hash_checked": false,
+    "hash_equal": null,
+    "unchanged": true,
+    "before": {
+      "path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\data\\rtu_data_full_훈련용.csv",
+      "length": 4909245995,
+      "last_write_time": "2026-10-10T12:25:47.569300+00:00",
+      "last_write_time_ns": 1791635147569300000,
+      "sha256": null
+    },
+    "after": {
+      "path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\data\\rtu_data_full_훈련용.csv",
+      "length": 4909245995,
+      "last_write_time": "2026-10-10T12:25:47.569300+00:00",
+      "last_write_time_ns": 1791635147569300000,
+      "sha256": null
+    }
+  },
+  "chunk": {
+    "size_bytes": 1048576,
+    "log_interval_rows": 2000000,
+    "single_sequential_pass": true,
+    "source_rows_not_materialized": true
+  },
+  "schema": [
+    "module",
+    "hour",
+    "hourly_pow",
+    "n"
+  ]
+}

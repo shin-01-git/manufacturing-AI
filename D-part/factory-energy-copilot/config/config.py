@@ -1,0 +1,166 @@
+"""Factory Energy Copilot - 중앙 설정(config)
+
+이 파일은 프로젝트의 단일 설정 출처(single source of truth)다.
+환산 계수, 이상탐지 임계값, 예측구간 분위수, 설비 상한, 경로, 역할 enum,
+환경변수 로더를 한곳에 모은다. 다른 모듈·테스트는 반드시 이 상수를 참조한다.
+
+사실/결정 근거:
+- 환산 계수(NFR-8, R8): may_bill = hourly_pow x 180, may_carbon = hourly_pow x 0.424
+- O-9(결정): 이상탐지 규칙은 (a) 3상 동시 판정, 임계값 전압 210V / 역률 85%
+- O-7(잠정): 예측구간 분위수 하한 0.05 / 상한 0.95 ("임시/잠정")
+- O-5(결정): 설비 수 최대 13 상한 + 발견된 설비만 사용
+- NFR-6: OPENAI_API_KEY / OPENAI_MODEL 은 환경변수에서만 읽고 값을 로그에 남기지 않는다
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# 경로 (프로젝트 루트 기준)
+# ---------------------------------------------------------------------------
+PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
+DATA_DIR: Path = PROJECT_ROOT / "data"
+ARTIFACTS_DIR: Path = PROJECT_ROOT / "artifacts"
+
+# 원본 데이터 경로. 학습 원본과 검증 정답을 분리한다(NFR-4 누수 방지).
+TRAINING_CSV: Path = DATA_DIR / "rtu_data_full_훈련용.csv"
+VALIDATION_CSV: Path = DATA_DIR / "rtu_ground_truth_may_검증용(5월).csv"
+
+# 주요 산출물 경로(서비스가 읽는 공유 artifact)
+HOURLY_FROM_FULL: Path = ARTIFACTS_DIR / "hourly_from_full.parquet"
+PREDICTIONS_CSV: Path = ARTIFACTS_DIR / "predictions.csv"
+EVALUATION_JSON: Path = ARTIFACTS_DIR / "evaluation.json"
+ANOMALY_EVENTS: Path = ARTIFACTS_DIR / "anomaly_events.parquet"
+ANOMALY_HOURLY: Path = ARTIFACTS_DIR / "anomaly_hourly.parquet"
+MODULE_STATUS_CSV: Path = ARTIFACTS_DIR / "module_status.csv"
+
+# ---------------------------------------------------------------------------
+# 환산 계수 (NFR-8, R8) — 단일 출처
+# 정답 파일과 동일 척도. 1000으로 나누지 않는다.
+# ---------------------------------------------------------------------------
+BILL_RATE: float = 180.0        # 원/kWh
+CARBON_RATE: float = 0.424      # kgCO2/kWh
+
+# ---------------------------------------------------------------------------
+# 집계 규칙 (A1, R4)
+# 시간별 전력량 = sum(activePower * 5 / 3600)
+# ---------------------------------------------------------------------------
+SECONDS_PER_SAMPLE: int = 5          # 5초 간격
+SAMPLES_PER_HOUR_COMPLETE: int = 720  # n=720 완전 시간 기준
+TIME_BASE: str = "localtime"          # KST 기준. timestamp 임의 사용 금지(NFR-3)
+
+# ---------------------------------------------------------------------------
+# 설비 상한 (O-5 결정) — 최대 13 상한 + 발견 집합
+# ---------------------------------------------------------------------------
+MODULE_COUNT_EXPECTED: int = 13  # 기대/상한값. 하드코딩 반복 금지, 발견 집합만 처리.
+
+# ---------------------------------------------------------------------------
+# 이상탐지 규칙 (O-9 결정: (a) 3상 동시 판정)
+#   (voltageR<210 AND voltageS<210 AND voltageT<210)
+#   OR (powerFactorR<85 AND powerFactorS<85 AND powerFactorT<85)
+# ---------------------------------------------------------------------------
+VOLTAGE_THRESHOLD: float = 210.0       # V. 세 상 모두 미만일 때 전압 이상 후보
+POWER_FACTOR_THRESHOLD: float = 85.0   # %. 세 상 모두 미만일 때 역률 이상 후보
+ANOMALY_RULE_MODE: str = "three_phase_simultaneous"  # (a) 3상 동시 (O-9)
+
+# ---------------------------------------------------------------------------
+# 예측구간 분위수 (O-7 잠정 결정) — "임시/잠정" 표시 필요
+# ---------------------------------------------------------------------------
+PRED_INTERVAL_LOW_Q: float = 0.05   # 잠정 하한 분위수
+PRED_INTERVAL_HIGH_Q: float = 0.95  # 잠정 상한 분위수
+PRED_INTERVAL_PROVISIONAL: bool = True  # True면 화면/로그에 "임시/잠정" 표시
+
+# ---------------------------------------------------------------------------
+# MAE 해석 참고값 (O-10 결정) — 참고용만. 합격/불합격 기준으로 사용 금지.
+# ---------------------------------------------------------------------------
+MAE_REFERENCE_UPPER: float = 89.0  # 참고용(학습 평균 반복)
+MAE_REFERENCE_LOWER: float = 73.0  # 참고용(정답 평균 하한)
+MAE_USE_AS_THRESHOLD: bool = False  # 반드시 False — 경고/합격 판정 금지
+
+# ---------------------------------------------------------------------------
+# 재현성 (NFR-7)
+# ---------------------------------------------------------------------------
+RANDOM_SEED: int = 42
+
+# ---------------------------------------------------------------------------
+# 역할 페르소나 (REQ-USER / 팀장 피드백 "역할명으로만")
+# 개인 이름을 두지 않는다. 역할 enum만 분기 기준으로 사용한다.
+# ---------------------------------------------------------------------------
+ROLES: dict[str, str] = {
+    "facility": "설비 관리 담당자",
+    "energy": "에너지 관리 담당자",
+    "executive": "경영진",
+}
+DEFAULT_ROLE: str = "facility"
+
+# 팀/프로젝트 표시 정보 (D1)
+TEAM_NAME: str = "문학적인 기계"
+PROJECT_TITLE: str = "Factory Energy Copilot"
+PROJECT_TAGLINE: str = "공장 전력량 예측·요금/탄소 환산·이상 구간 탐지 근거 기반 대시보드"
+
+# ---------------------------------------------------------------------------
+# 대시보드 UI 상수 (steering dashboard-ui A-1, A-2)
+# ---------------------------------------------------------------------------
+# activePower 단위가 [미확인]이므로 "kWh/원"으로 단정하지 않는다. 요금·탄소는
+# 정답 파일과 동일 척도(NFR-8). 팀이 단위를 확정하면 이 한 곳만 바꾼다.
+UNIT_LABELS: dict[str, str] = {
+    "pow": "전력량(데이터 척도)",
+    "bill": "요금(정답 척도, ×180)",
+    "carbon": "탄소(정답 척도, ×0.424)",
+}
+UNIT_FOOTNOTE: str = "ⓘ 원본 activePower 단위 미확인 — 정답 파일과 동일 척도로 환산"
+
+# O-3 상태 경계값 미승인. True가 되기 전에는 status를 '미확정' 회색 칩으로만 표시.
+STATUS_THRESHOLDS_APPROVED: bool = False
+
+# 분석 기준 기간(검증 모드) 표시용. 예측 artifacts의 id 범위와 일치해야 한다.
+ANALYSIS_PERIOD_START: str = "2025-05-10"
+ANALYSIS_PERIOD_END: str = "2025-05-31"
+
+# 데이터 출처 라벨(사이드바 푸터)
+DATA_SOURCE_LABEL: str = "데이터 출처: artifacts (batch)"
+
+# ---------------------------------------------------------------------------
+# UI v3: 이상 유형 표시 이름 매핑 / 화면 경고 기본 기준 / 야간 시간대
+# - 매핑은 표시 이름일 뿐이다. anomaly_events.type 에 실제로 있는 값만 칩으로 만든다.
+# - 경고 기준은 "화면 표시 기준"만 바꾼다(배치 탐지 결과는 그대로).
+# ---------------------------------------------------------------------------
+ANOMALY_TYPE_LABELS: dict[str, str] = {
+    "voltage_low_3phase": "3상 저전압",
+    "power_factor_low_3phase": "3상 저역률",
+    "load_imbalance": "부하 불균형",
+    "reactive_power_surge": "무효전력 급증",
+    "power_factor_drop": "역률 급감",
+    "abnormal_pattern": "비정상 패턴",
+    "night_operation": "야간 이상가동",
+    "current_only_increase": "전류만 증가",
+}
+DEFAULT_BILL_SURGE_PCT: float = 20.0       # 예측 요금이 일 평균 대비 +20% 이상이면 경고
+DEFAULT_ANOMALY_SURGE_FACTOR: float = 3.0  # 평소 시간당 건수의 3배 이상이면 급증
+DEFAULT_NIGHT_START_HOUR: int = 22
+DEFAULT_NIGHT_END_HOUR: int = 6
+
+
+# ---------------------------------------------------------------------------
+# 환경변수 로더 (NFR-6) — 값/부분값을 로그에 남기지 않는다.
+# ---------------------------------------------------------------------------
+def get_openai_api_key() -> str | None:
+    """OPENAI_API_KEY를 환경변수에서만 읽는다. 값을 로그에 남기지 않는다.
+
+    Returns:
+        키 문자열 또는 없으면 None.
+    """
+    return os.environ.get("OPENAI_API_KEY")
+
+
+def get_openai_model() -> str:
+    """OPENAI_MODEL을 환경변수에서 읽고, 없으면 기본값을 쓴다."""
+    return os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+
+
+def has_openai_key() -> bool:
+    """키 존재 여부만 반환한다(값 노출 없음). fallback 분기용."""
+    key = get_openai_api_key()
+    return bool(key and key.strip())

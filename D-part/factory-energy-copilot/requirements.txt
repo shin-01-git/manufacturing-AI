@@ -1,0 +1,15 @@
+# Factory Energy Copilot - Python 3.11
+# 데이터 처리
+pandas>=2.0
+pyarrow>=14.0
+numpy>=1.24
+# 모델
+scikit-learn>=1.3
+# 대시보드
+streamlit>=1.30
+plotly>=5.18
+# 에이전트
+openai>=1.0
+# 테스트
+pytest>=7.0
+hypothesis>=6.0

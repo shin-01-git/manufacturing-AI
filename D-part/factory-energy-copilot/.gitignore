@@ -1,0 +1,59 @@
+# ===== 데이터(절대 커밋 금지) =====
+# 4.9GB 원본 및 검증 정답 등 원본 데이터는 저장소에 올리지 않는다 (R1, R2, S7)
+data/
+*.csv
+*.parquet
+
+# ===== 비밀/환경 =====
+.env
+.env.*
+!.env.example
+*.key
+secrets/
+
+# ===== Python 가상환경 / 캐시 =====
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.hypothesis/
+.ipynb_checkpoints/
+
+# ===== 산출물(큰 중간 파일) =====
+# artifacts는 배포 대상이지만 대용량/중간 파일은 추적하지 않는다. 필요한 샘플만 예외 처리.
+artifacts/*
+!artifacts/.gitkeep
+# Dashboard deployment artifacts (raw data and all-methods scan remain excluded)
+!artifacts/predictions.csv
+!artifacts/actual_vs_pred.csv
+!artifacts/evaluation.json
+!artifacts/module_status.csv
+!artifacts/anomaly_events.parquet
+!artifacts/anomaly_hourly.parquet
+!artifacts/hourly_from_full.parquet
+!artifacts/anomaly_rebuild_meta.json
+!artifacts/model_selection.json
+!artifacts/source_meta.json
+!artifacts/aggregate_run.json
+# Model continuation artifacts
+!artifacts/features.parquet
+!artifacts/model.joblib
+!artifacts/preprocessor_state.json
+
+# ===== 기획 문서(최종본만 추적) =====
+# 최종 기획서 "2팀 서비스 기획서 10.10.pdf"만 올리고 나머지는 제외
+2팀_서비스기획서_Factory_Energy_Copilot.pdf
+프로젝트 가이드.pdf
+
+# ===== 작업 산출물(워크플로 리뷰 등) =====
+.agents/
+
+# ===== OS / 에디터 =====
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

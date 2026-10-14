@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "train_version": "1.0.0",
+  "generated_at": "2026-10-12T16:53:29.659924+00:00",
+  "input_path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\artifacts\\features.parquet",
+  "random_seed": 42,
+  "split_time": "2025-04-08T23:00:00+09:00",
+  "validation_weeks": 3,
+  "selected_model": "calendar_linear_regression",
+  "selection_score_validation_mae": 78.80656669187117,
+  "candidate_scores": {
+    "calendar_linear_regression": 78.80656669187117,
+    "random_forest": 80.97851447662411
+  },
+  "refit_scope": "full training span",
+  "refit_row_count": 3600,
+  "train_row_count": 3095,
+  "validation_row_count": 505,
+  "baseline_comparison": [
+    {
+      "model": "global_mean_repeat",
+      "kind": "baseline",
+      "validation_mae": 78.74665738366747
+    },
+    {
+      "model": "weekday_hour_mean",
+      "kind": "baseline",
+      "validation_mae": 79.97998477706705
+    },
+    {
+      "model": "previous_week_same_hour",
+      "kind": "baseline",
+      "validation_mae": 90.24457453124721
+    },
+    {
+      "model": "calendar_linear_regression",
+      "kind": "candidate",
+      "validation_mae": 78.80656669187117
+    },
+    {
+      "model": "random_forest",
+      "kind": "candidate",
+      "validation_mae": 80.97851447662411
+    }
+  ],
+  "model_path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\artifacts\\model.joblib",
+  "state_path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\artifacts\\preprocessor_state.json"
+}
