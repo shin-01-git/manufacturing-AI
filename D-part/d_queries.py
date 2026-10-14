@@ -17,7 +17,7 @@
 #    탄소 = 전력량 × 0.424
 # ============================================================
 
-from d_roles import BILL_RATE, CARBON_RATE
+from d_roles import BILL_RATE, CARBON_RATE, TREE_ABSORB_KG, TREE_SOURCE
 
 
 # ------------------------------------------------------------
@@ -33,12 +33,24 @@ def calc_carbon(energy_kwh):
     return energy_kwh * CARBON_RATE
 
 
+def calc_trees(carbon_kg):
+    """탄소배출량(kg)을 '소나무 몇 그루가 1년간 흡수하는 양'으로 환산한다.
+    기준: 산림청 — 소나무 1그루 연간 약 6.6kg CO2 흡수.
+    예) 탄소 6.6kg = 나무 1그루, 13.2kg = 2그루."""
+    if not TREE_ABSORB_KG:
+        return 0
+    return carbon_kg / TREE_ABSORB_KG
+
+
 def summarize_energy(energy_kwh):
-    """전력량 하나로 요금·탄소를 한 번에 계산해 딕셔너리로 돌려준다."""
+    """전력량 하나로 요금·탄소·나무그루수를 한 번에 계산해 딕셔너리로 돌려준다."""
+    carbon = calc_carbon(energy_kwh)
     return {
         "energy": energy_kwh,
         "bill": calc_bill(energy_kwh),
-        "carbon": calc_carbon(energy_kwh),
+        "carbon": carbon,
+        "trees": calc_trees(carbon),          # 탄소 상쇄에 필요한 소나무 그루 수
+        "tree_source": TREE_SOURCE,            # 환산 기준 출처(산림청)
     }
 
 
@@ -308,10 +320,12 @@ def rank_carbon_by_equipment(df, start=None, end=None, top=5):
     items = [
         {"equipment": name, "kwh": round(float(kwh), 2),
          "carbon": round(calc_carbon(float(kwh)), 2),
+         "trees": round(calc_trees(calc_carbon(float(kwh))), 1),
          "bill": round(calc_bill(float(kwh)), 2)}
         for name, kwh in ranked.items()
     ]
-    return {"status": "ok", "period": (start, end), "top": top, "items": items}
+    return {"status": "ok", "period": (start, end), "top": top,
+            "tree_source": TREE_SOURCE, "items": items}
 
 
 # ------------------------------------------------------------
@@ -452,6 +466,95 @@ def monthly_compare(df, equipment=None):
         })
         prev = kwh
     return {"status": "ok", "items": items}
+
+
+def analyze_efficiency(df, start=None, end=None,
+                       pf_mean_threshold=85.0, pf_min_threshold=80.0,
+                       low_op_threshold=0.5, top=10):
+    """운영 효율성 분석 (역률 + 가동률 기반). '관찰된 사실'만 돌려준다.
+
+    세 가지 관점으로 효율이 낮아 보이는 설비를 찾는다:
+      1) 평균 역률 저하: pf_mean이 기준(pf_mean_threshold) 미만
+         -> 전기를 지속적으로 비효율적으로 쓰는 중일 수 있음.
+      2) 순간 역률 저하: pf_min이 기준(pf_min_threshold) 미만
+         -> 평소엔 괜찮아도 특정 구간에 효율이 크게 떨어진 적 있음(노후·부하 변동 의심).
+      3) 가동률 대비 과전력: 가동률(op_ratio)은 낮은데 평균 전력(ap_mean)은
+         전체 평균 이상 -> 대기/공회전 전력 낭비 의심.
+
+    [원칙] '고장'으로 단정하지 않는다. 사실과 '점검 권고'를 구분해 돌려준다.
+    반환: {status, period, criteria, items:[{equipment, issue, detail, suggestion}]}
+    """
+    if df is None:
+        return _NO_DATA
+    sub = _filter_period(df, start, end)
+    if len(sub) == 0:
+        return {"status": "empty", "message": "해당 기간 데이터가 없습니다."}
+
+    # 설비별 평균 지표 집계
+    g = sub.groupby("module(equipment)").agg(
+        pf_mean=("pf_mean", "mean"),
+        pf_min=("pf_min", "min"),
+        op_ratio=("op_ratio", "mean"),
+        ap_mean=("ap_mean", "mean"),
+        kwh=("kwh_sum", "sum"),
+    )
+    overall_ap = float(sub["ap_mean"].mean())   # 전체 평균 전력(비교 기준)
+
+    items = []
+    for eq, r in g.iterrows():
+        pf = float(r["pf_mean"])
+        pf_low = float(r["pf_min"])
+        op = float(r["op_ratio"])
+        ap = float(r["ap_mean"])
+
+        # 1) 평균 역률 저하 관찰
+        if pf < pf_mean_threshold:
+            items.append({
+                "equipment": eq,
+                "issue": "평균 역률 저하(지속적 전기 효율 낮음)",
+                "detail": f"평균 역률 {round(pf,1)} (기준 {pf_mean_threshold} 미만)",
+                "suggestion": ("역률 보정 설비(콘덴서) 상태와 노후 여부를 점검하세요. "
+                               "현재 데이터만으로 고장으로 단정할 수 없습니다."),
+                "metric": round(pf, 1),
+            })
+
+        # 2) 순간 역률 저하 관찰 (평균은 괜찮아도 최저가 많이 낮은 경우)
+        elif pf_low < pf_min_threshold:
+            items.append({
+                "equipment": eq,
+                "issue": "순간 역률 저하(특정 구간 효율 급감)",
+                "detail": f"평균 역률은 {round(pf,1)}로 양호하나, 역률 최저가 "
+                          f"{round(pf_low,1)}까지 떨어진 구간이 있음 (기준 {pf_min_threshold} 미만)",
+                "suggestion": ("역률이 낮아진 시간대의 부하 상태·가동 조건을 확인하고, "
+                               "반복되면 역률 보정과 노후 점검을 검토하세요. 단정이 아닌 권고입니다."),
+                "metric": round(pf_low, 1),
+            })
+
+        # 3) 가동률 대비 과전력 관찰 (가동률 낮은데 전력은 전체 평균 이상)
+        if op < low_op_threshold and ap >= overall_ap:
+            items.append({
+                "equipment": eq,
+                "issue": "가동률 대비 전력 과다(대기전력 낭비 의심)",
+                "detail": f"가동률 {round(op*100,0):.0f}% 인데 평균 전력 {round(ap,1)}kW "
+                          f"(전체 평균 {round(overall_ap,1)}kW 이상)",
+                "suggestion": ("실제 가동 여부와 대기/공회전 상태 전력 사용을 확인하고, "
+                               "미사용 시 전원 차단을 검토하세요. 단정이 아닌 점검 권고입니다."),
+                "metric": round(op, 3),
+            })
+
+    # '더 심한 것'(수치 낮은 것)이 위로 오게 정렬
+    items.sort(key=lambda x: x["metric"])
+    return {
+        "status": "ok",
+        "period": (start, end),
+        "criteria": {"pf_mean_threshold": pf_mean_threshold,
+                     "pf_min_threshold": pf_min_threshold,
+                     "low_op_threshold": low_op_threshold,
+                     "overall_ap_mean": round(overall_ap, 1)},
+        "count": len(items),
+        "items": items[:top],
+        "note": "관찰된 사실과 점검 권고만 제공합니다. 고장/손실을 확정하지 않습니다.",
+    }
 
 
 # ------------------------------------------------------------

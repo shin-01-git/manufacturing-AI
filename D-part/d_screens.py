@@ -94,6 +94,8 @@ def render_summary_box(dff, role_id, date_from, date_to):
             c1.metric("💡 총 전력량", f"{tot.get('energy', 0):,.0f} kWh")
             c2.metric("💰 요금", f"{tot.get('bill', 0):,.0f} 원")
             c3.metric("🌍 탄소", f"{tot.get('carbon', 0):,.0f} kg")
+            st.caption(f"🌳 이 탄소량은 소나무 약 {tot.get('trees', 0):,.0f}그루가 "
+                       f"1년간 흡수하는 양입니다. (산림청 기준: 1그루 연 6.6kg)")
             st.caption(f"👉 탄소 최다 배출 설비: {top_eq} — 감축 우선 검토 대상")
 
 
@@ -333,12 +335,15 @@ def render_custom_info(df=None):
         st.subheader("🌱 비용 / 탄소 요약")
 
         total = q.get_total_energy(dff)
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric("총 전력량(kWh)", f"{total['energy']:,.0f}")
         c2.metric("총 요금(원)", f"{total['bill']:,.0f}")
         c3.metric("총 탄소(kgCO₂)", f"{total['carbon']:,.0f}")
+        c4.metric("🌳 소나무 환산", f"{total.get('trees', 0):,.0f} 그루")
         st.caption(f"요금=전력량×{BILL_RATE}, 탄소=전력량×{CARBON_RATE} "
                    f"· 기간 {date_from}~{date_to}")
+        st.caption(f"🌳 소나무 환산: 위 탄소량은 소나무 약 {total.get('trees', 0):,.0f}그루가 "
+                   f"1년간 흡수하는 양입니다. (산림청 기준: 30년생 소나무 1그루 연 6.6kg CO₂ 흡수)")
 
         st.divider()
         if sel == "(전체)":

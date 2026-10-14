@@ -89,12 +89,27 @@ SYSTEM_PROMPT = """\
 - 전압은 'V', 전류는 'A', 역률은 단위 없는 비율(또는 %)이다.
   도구가 준 숫자에 임의로 1000을 곱하거나 나누지 말고, 위 단위만 정확히 붙여라.
 
+[탄소 설명 — 나무 그루 수 함께]
+- 탄소 배출량(carbon, kgCO₂)을 말할 때는, 도구 결과의 'trees' 값(소나무 그루 수)을
+  함께 제시해 체감도를 높여라. 예) "탄소 1,320 kgCO₂ (소나무 약 200그루가 1년간
+  흡수하는 양)". 'trees' 값은 도구가 계산해 주며, 산림청 기준(소나무 1그루 연간
+  약 6.6kg 흡수)에 따른 것이다. 그루 수를 네가 새로 계산하지 말고 도구 값을 써라.
+
 [역률 질문 처리]
 - '역률 낮은 설비', '역률 저하', '노후화 의심' 같은 질문이면 get_anomalies를 호출하라.
   get_data_overview의 건수만으로 답하지 마라(그건 '몇 건'만 알려줄 뿐이다).
 - get_anomalies 결과의 items에는 설비명(equipment)·시각(time)·역률 최저(pf_min)가 있다.
   건수만 말하지 말고, '어느 설비가 언제 역률이 얼마였는지'를 상위 몇 개 구체적으로 답하라.
   예) "5(좌측분전반)이 2025-01-02 09시에 역률 최저 62로 가장 낮았습니다" 처럼.
+
+[효율성 분석 / 개선 권고 처리]
+- '효율 어때?', '비효율 설비', '개선할 점', '절감 포인트', '낭비' 같은 질문이면
+  analyze_efficiency를 호출하라.
+- 결과 items의 각 항목에는 설비명(equipment), 관찰된 문제(issue), 근거 수치(detail),
+  점검 권고(suggestion)가 있다. 이 네 가지를 묶어 설비별로 설명하라.
+- 반드시 '관찰된 사실'과 '권고'를 구분해 서술하라. "이 설비는 고장이다/교체하라"처럼
+  단정하지 마라. "~가 관찰됩니다. ~를 점검해보세요" 형태로 권고하라.
+- 효율 분석에도 기준 기간과 데이터 품질 상태를 함께 밝혀라.
 """
 
 # (2) 역할 1 — 현황 요약 보고서의 6단계 고정 형식
@@ -165,7 +180,8 @@ def build_prompt(role_id=None, mode="summary"):
 #   - 그 외에는 단순 조회(qa)
 # ------------------------------------------------------------
 _REPORT_HINTS = ["보고서", "요약", "현황", "정리", "리포트", "report",
-                 "종합", "점검", "브리핑", "분석해", "전반", "전체적으로"]
+                 "종합", "점검", "브리핑", "분석", "전반", "전체적으로",
+                 "효율", "개선", "권고", "절감", "낭비", "진단"]
 
 
 def decide_mode(question):
@@ -284,6 +300,24 @@ TOOLS = [
                     "start": {"type": "string"},
                     "end": {"type": "string"},
                     "top": {"type": "integer", "description": "상위 몇 개 (기본 20)"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analyze_efficiency",
+            "description": ("운영 효율성 분석(역률·가동률 기반). 역률이 낮아 전기 효율이 "
+                            "떨어지는 설비, 가동률 대비 전력이 과다한(대기전력 낭비 의심) "
+                            "설비를 '관찰된 사실 + 점검 권고'로 돌려준다. "
+                            "'효율 어때?', '비효율 설비', '개선/절감할 점', '낭비' 같은 "
+                            "질문이면 이 함수를 호출하라."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "start": {"type": "string"},
+                    "end": {"type": "string"},
                 },
             },
         },
@@ -435,6 +469,8 @@ def run_tool(name, args, df=None):
                                         sigma=args.get("sigma", 3.0), top=args.get("top", 20))
     if name == "monthly_compare":
         return q.monthly_compare(df, equipment=args.get("equipment"))
+    if name == "analyze_efficiency":
+        return q.analyze_efficiency(df, args.get("start"), args.get("end"))
     return {"status": "error", "message": f"알 수 없는 함수: {name}"}
 
 
