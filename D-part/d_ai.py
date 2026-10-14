@@ -16,6 +16,12 @@ import re
 import d_queries as q
 
 # ============================================================
+# [사용 모델] 팀 합의: OpenAI gpt-4o-mini 사용 (저렴하고 이 용도에 충분).
+#   - 바꿔야 하면 이 한 줄만 수정하면 전체에 반영된다.
+# ============================================================
+MODEL_NAME = "gpt-4o-mini"
+
+# ============================================================
 # [프롬프트] AI에게 주는 '지시문'. AI가 이 규칙대로 답하게 만든다.
 #   - 신입사원 업무 매뉴얼이라고 생각하면 된다.
 #   - requirements.md 의 AI 안전장치 / 6단계 형식 / 역할별 표현을 그대로 반영.
@@ -436,7 +442,7 @@ def run_tool(name, args, df=None):
 # 3) 질문 -> AI -> 함수 호출 -> AI 설명  (전체 흐름)
 #    [상태] OpenAI 호출 부분은 API 키가 있어야 작동. 지금은 뼈대만.
 # ------------------------------------------------------------
-def ask(question, role_id=None, df=None, api_key=None, model="gpt-4o-mini",
+def ask(question, role_id=None, df=None, api_key=None, model=MODEL_NAME,
         mode="auto", max_tool_rounds=4):
     """사용자 질문을 받아 AI가 조회 함수를 호출하고 답을 돌려준다.
 

@@ -408,7 +408,9 @@ def render_ai_report(df=None):
 
         import d_ai
         with st.spinner("AI가 데이터를 조회하는 중..."):
-            res = d_ai.ask(question, role_id=role_id, df=df, api_key=api_key)
+            # 팀 합의 모델(d_ai.MODEL_NAME = gpt-4o-mini) 사용
+            res = d_ai.ask(question, role_id=role_id, df=df, api_key=api_key,
+                           model=d_ai.MODEL_NAME)
 
         if res.get("status") == "no_api_key":
             st.warning("OpenAI API 키가 설정되지 않았습니다. "
