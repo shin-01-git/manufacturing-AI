@@ -73,13 +73,26 @@ def load_aggregated(path=AGG_PATH):
     return df
 
 
+def _to_hour_key(value, is_end=False):
+    """'2025-02-08', date 객체, '20250208', '2025020816' 모두 YYYYMMDDhh로 맞춘다."""
+    if value is None:
+        return None
+    s = str(value).replace("-", "").replace(" ", "").replace(":", "")[:10]
+    if len(s) == 8:
+        s += "23" if is_end else "00"
+    return s
+
+
 def _filter_period(df, start=None, end=None):
-    """hour(YYYYMMDDhh 문자열) 기준으로 기간을 거른다. start/end도 같은 형식."""
     sub = df
-    if start is not None:
-        sub = sub[sub["hour"] >= str(start)]
-    if end is not None:
-        sub = sub[sub["hour"] <= str(end)]
+    hours = sub["hour"].astype(str)
+    s = _to_hour_key(start)
+    e = _to_hour_key(end, is_end=True)
+    if s:
+        sub = sub[hours >= s]
+        hours = sub["hour"].astype(str)
+    if e:
+        sub = sub[hours <= e]
     return sub
 
 
