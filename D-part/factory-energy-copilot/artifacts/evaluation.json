@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "evaluate_version": "1.0.0",
+  "row_count": 505,
+  "mae_hourly_pow": {
+    "mae504": 88.19653240388544,
+    "mae505": 88.1798372517372
+  },
+  "mae_may_bill": {
+    "mae504": 15875.375832699398,
+    "mae505": 15872.370705312718
+  },
+  "mae_may_carbon": {
+    "mae504": 37.39532973923449,
+    "mae505": 37.388250994723606
+  },
+  "predicted_total_pow": 19759391.79182341,
+  "agg_pow_total": 19731048.8879453,
+  "agg_pow_is_constant": true,
+  "agg_pow_total_error": 28342.903878107667,
+  "agg_pow_total_error_ratio": 0.0014364620978372714,
+  "baseline_comparison": [
+    {
+      "model": "global_mean_repeat",
+      "kind": "baseline",
+      "validation_mae": 78.74665738366747
+    },
+    {
+      "model": "weekday_hour_mean",
+      "kind": "baseline",
+      "validation_mae": 79.97998477706705
+    },
+    {
+      "model": "previous_week_same_hour",
+      "kind": "baseline",
+      "validation_mae": 90.24457453124721
+    },
+    {
+      "model": "calendar_linear_regression",
+      "kind": "candidate",
+      "validation_mae": 78.80656669187117
+    },
+    {
+      "model": "random_forest",
+      "kind": "candidate",
+      "validation_mae": 80.97851447662411
+    }
+  ],
+  "reference_note": {
+    "mae_reference_upper": 89.0,
+    "mae_reference_lower": 73.0,
+    "use_as_threshold": false,
+    "note": "참고용(합격 기준 아님)"
+  },
+  "generated_at": "2026-10-14T09:18:38.508097+00:00",
+  "predictions_path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\artifacts\\predictions.csv",
+  "validation_path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\data\\rtu_ground_truth_may_검증용(5월).csv"
+}

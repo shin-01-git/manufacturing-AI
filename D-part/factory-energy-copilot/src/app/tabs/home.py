@@ -1,0 +1,474 @@
+"""홈 페이지 (v3 §4, v4 home.png) — 공장 전체 5월 예측·요금·탄소.
+
+첫 화면: 경고 띠 → KPI 5 → [차트 | 경고 목록] → [일/주 예측 | 총비용 | 리포트 요약].
+스크롤 아래: 분석 플로우 6단계 → [모델 비교 | 시간대 프로파일] (선택 기능).
+숫자는 artifacts(predictions.csv · actual_vs_pred.csv · evaluation.json 등)에서만 읽고
+공용 포매터(fmt)로만 출력한다. 요금·탄소는 설정 계수로 재계산하되 MAE는 항상
+evaluation.json(config 기본 계수) 값이다 (v3 §6 규칙 2).
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from config import config
+from src.agent import tools as tools_mod
+from src.app import nav, page_logic, ui_logic
+from src.app.ui import charts, components, fmt, theme
+
+PANEL_CHART = "hm_chart"
+PANEL_ALERTS = "hm_alerts"
+PANEL_PERIOD = "hm_period"
+PANEL_COST = "hm_cost"
+PANEL_REPORT = "hm_report"
+PANEL_TOP = "hm_top"
+PANEL_FLOW = "hm_flow"
+PANEL_MODELS = "hm_models"
+PANEL_PROFILE = "hm_profile"
+
+H_MAIN = 330
+H_BOTTOM = 250
+H_FLOW = 250
+H_LOW = 360
+
+METRIC_OPTIONS = ["요금", "탄소", "전력량"]
+_METRIC_KEY = {"요금": "bill", "탄소": "carbon", "전력량": "pow"}
+
+CARBON_UNIT_NOTE = "탄소량 단위 미확인 — 정답 척도 기준"
+
+
+def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> None:
+    import streamlit as st
+
+    forecast = bundle["forecast"]
+    evaluation = bundle["evaluation"]
+    settings = ctx["settings"]
+    alerts = ctx["alerts"]
+    forecast_ok = "error" not in forecast and forecast.get("count", 0) > 0
+
+    _render_strip(st, alerts)
+
+    rows = forecast.get("rows", []) if forecast_ok else []
+    start, end = ctx["start"], ctx["end"]
+    unit = ctx["gran"]
+    totals = page_logic.scaled_totals(rows, settings, start=start, end=end)
+    buckets = page_logic.resample_rows(
+        rows, unit, ("pred_pow", "pred_carbon"), start=start, end=end
+    )
+    # pred_carbon/pred_bill in predictions.csv use default rates; deltas are
+    # relative, so the rate does not change them.
+    profile = page_logic.role_profile(ctx.get("role", config.DEFAULT_ROLE))
+    _render_kpis(st, bundle, ctx, forecast_ok, totals, buckets, unit, profile)
+
+    chart_col, alert_col = st.columns([2.35, 1])
+    with chart_col:
+        _render_chart(st, bundle, ctx, rows, profile)
+    with alert_col:
+        _render_alert_panel(st, alerts)
+
+    # Row 3: panel set and order depend on the role (경영진: 리포트 먼저, 설비 관리: 이상 상위 설비).
+    panels = {
+        "period": lambda: _render_period_panel(st, rows, unit, start, end, forecast_ok),
+        "cost": lambda: _render_cost_panel(st, totals, settings, forecast_ok),
+        "report": lambda: _render_report_panel(st, bundle, totals, settings),
+        "top_modules": lambda: _render_top_modules_panel(st, bundle),
+    }
+    for col, key in zip(st.columns(3), profile["home_row3"]):
+        with col:
+            panels[key]()
+
+    # Second screen (예측 근거): analysis detail for the energy role only.
+    if profile["home_detail"]:
+        _render_flow(st, bundle)
+        left, right = st.columns(2)
+        with left:
+            _render_models(st, bundle)
+        with right:
+            _render_profile(st, rows, settings, forecast_ok)
+
+
+# ---------------------------------------------------------------------------
+def _render_strip(st, alerts: dict[str, Any]) -> None:
+    errors = bool(alerts["errors"])
+    html = components.alert_strip(
+        alerts["count"],
+        interval_count=alerts["interval_count"],
+        surge_count=alerts["surge_count"],
+        error=errors,
+    )
+    if alerts["surge_count"] and not errors:
+        c1, c2 = st.columns([12, 1.4], vertical_alignment="center")
+        c1.markdown(html, unsafe_allow_html=True)
+        c2.button(
+            "보기 ›", key="strip_view", type="tertiary",
+            on_click=nav.go, args=(page_logic.PAGE_ANOMALY,),
+        )
+    else:
+        st.markdown(html, unsafe_allow_html=True)
+
+
+def _render_kpis(st, bundle, ctx, forecast_ok, totals, buckets, unit, profile) -> None:
+    settings = ctx["settings"]
+    alerts = ctx["alerts"]
+    evaluation = bundle["evaluation"]
+    differs = page_logic.rates_differ_from_default(settings)
+    chip = "설정값 기준" if differs else ""
+    dash = "—"
+
+    def v(fn, value):
+        return fn(value) if forecast_ok else dash
+
+    price = settings.get("carbon_price")
+    cost = totals["carbon_cost"]
+    mae = evaluation.get("mae_hourly_pow") if "error" not in evaluation else None
+    mae_ok = isinstance(mae, dict)
+    events = bundle["events"]
+    status = bundle["module_status"]
+    ev_ok = "error" not in events
+    st_ok = "error" not in status
+
+    tiles = {
+        "pow": components.kpi_tile(
+            "예측 전력량", v(fmt.fmt_pow, totals["pow"]), sub="Σ pred_pow",
+            icon_name="zap", tone="power",
+            delta=page_logic.delta_pct(buckets, "pred_pow", unit) if forecast_ok else None,
+        ),
+        "bill": components.kpi_tile(
+            "예측 요금", v(fmt.fmt_bill, totals["bill"]),
+            sub=f"Σ pred_pow × {settings['bill_rate']:g}", icon_name="wallet", tone="bill",
+            chip_text=chip,
+            delta=page_logic.delta_pct(buckets, "pred_pow", unit) if forecast_ok else None,
+        ),
+        "carbon": components.kpi_tile(
+            "예측 탄소", v(fmt.fmt_carbon, totals["carbon"]),
+            sub=f"Σ pred_pow × {settings['carbon_rate']:g}", icon_name="leaf", tone="carbon",
+            chip_text=chip,
+            delta=page_logic.delta_pct(buckets, "pred_carbon", unit) if forecast_ok else None,
+        ),
+        "cost": components.kpi_tile(
+            "예상 탄소비용(가정)",
+            fmt.fmt_bill(cost) if (forecast_ok and cost is not None) else dash,
+            sub="탄소 합 ÷ 1000 × 단가" if cost is not None else "단가 설정 ›",
+            icon_name="leaf", disabled=cost is None,
+            chip_text="설정값 기준" if cost is not None else "",
+        ),
+        "mae": components.kpi_tile(
+            "전력량 MAE(504)",
+            fmt.fmt_mae(mae.get("mae504")) if mae_ok else dash,
+            sub=(f"505 기준 {fmt.fmt_mae(mae.get('mae505'))} · 참고용" if mae_ok else "evaluation.json 없음"),
+            icon_name="target", tone="accuracy",
+        ),
+        "interval": components.kpi_tile(
+            "예측구간 이탈",
+            f"{alerts['interval_count']}시간" if not alerts["errors"] else dash,
+            sub="실제값이 P5–P95 밖인 시간 (잠정)", icon_name="alert_sq",
+        ),
+        "events": components.kpi_tile(
+            "기간 이상 행수", fmt.fmt_count(events.get("count")) if ev_ok else dash,
+            sub="규칙 3상 동시 · 관찰 기록", icon_name="anomaly", tone="anomaly",
+        ),
+        "surge": components.kpi_tile(
+            "이상 급증 설비", f"{alerts['surge_count']}대" if not alerts["errors"] else dash,
+            sub=f"평소 건수의 {settings['anomaly_surge_factor']:g}배 이상", icon_name="pulse",
+        ),
+        "found": components.kpi_tile(
+            "발견 설비",
+            (lambda s: f"{s['count']} / {s['cap']}")(ui_logic.discovered_module_summary(status)) if st_ok else dash,
+            sub="O-5 최대 13 상한", icon_name="grid",
+        ),
+        "alerts": components.kpi_tile(
+            "경고 건수", str(alerts["count"]) if not alerts["errors"] else dash,
+            sub="예측구간 이탈·요금 급증·이상 급증", icon_name="bell",
+        ),
+    }
+    for col, key in zip(st.columns(5), profile["kpis"]):
+        col.markdown(tiles[key], unsafe_allow_html=True)
+    foot_l, foot_r = st.columns([4, 1.4], vertical_alignment="center")
+    foot_l.caption(fmt.unit_footnote())
+    if price in (None, "") and "cost" in profile["kpis"] and "설정" in page_logic.pages_for_role(ctx["role"]):
+        foot_r.button(
+            "탄소 가격을 설정하세요 ›", key="cost_set_price", type="tertiary",
+            on_click=nav.go, args=(page_logic.PAGE_SETTINGS,),
+        )
+
+
+def _render_chart(st, bundle, ctx, rows, profile) -> None:
+    avp = bundle["actual_vs_pred"]
+    settings = ctx["settings"]
+    with components.panel(height=H_MAIN, key=PANEL_CHART):
+        head_l, head_r = st.columns([5, 4], vertical_alignment="center")
+        with head_l:
+            st.markdown(
+                components.panel_header(
+                    "시간대별 예측 vs 실제", icon_name="forecast", desc="예측구간 P5–P95 (잠정)"
+                ),
+                unsafe_allow_html=True,
+            )
+        with head_r:
+            metric_label = st.segmented_control(
+                "지표", options=METRIC_OPTIONS, default=profile["metric"], key=f"home_metric_{ctx['role']}",
+                label_visibility="collapsed",
+            )
+        metric = _METRIC_KEY.get(metric_label or "요금", "bill")
+        if not rows:
+            st.markdown(
+                components.error_state("예측 데이터를 불러오지 못함", artifact=tools_mod.PREDICTIONS_NAME),
+                unsafe_allow_html=True,
+            )
+            return
+
+        rate = {"pow": 1.0, "bill": float(settings["bill_rate"]), "carbon": float(settings["carbon_rate"])}[metric]
+        unit = ctx["gran"]
+        merged = _merge_rows(rows, avp)
+        buckets = page_logic.resample_rows(
+            merged, unit, ("pred_pow", "pred_low", "pred_high", "actual_pow"),
+            start=ctx["start"], end=ctx["end"],
+        )
+        if unit != "시간":
+            # Partial day/week sums are not comparable with full buckets; the bar panel
+            # below still shows them (lighter), so the line chart keeps complete ones.
+            buckets = [b for b in buckets if not b["partial"]]
+        if not buckets:
+            st.markdown(components.empty_state("선택 기간에 완전한 구간 없음"), unsafe_allow_html=True)
+            return
+        chart_rows = [
+            {
+                "id": b["key"],
+                "pred_pow": (b["pred_pow"] or 0.0) * rate,
+                "pred_low": None if b["pred_low"] is None else b["pred_low"] * rate,
+                "pred_high": None if b["pred_high"] is None else b["pred_high"] * rate,
+            }
+            for b in buckets
+        ]
+        actuals = (
+            {b["key"]: b["actual_pow"] * rate for b in buckets if b["actual_pow"] is not None}
+            if "error" not in avp else None
+        )
+        fig = charts.forecast_band_chart(
+            chart_rows, actuals=actuals, height=theme.chart_height(H_MAIN, has_caption=True),
+            metric=metric, color=theme.COLOR["accent"],
+        )
+        st.plotly_chart(fig, width="stretch", config=charts.PLOTLY_CONFIG)
+        note = "y축 0에서 시작하지 않음 · 예측구간은 임시/잠정값" + ("" if unit == "시간" else " · 부분 구간 제외")
+        if "error" in avp:
+            note = "실제값 artifact(actual_vs_pred.csv)를 불러오지 못해 예측만 표시합니다."
+        st.caption(note)
+
+
+def _merge_rows(rows: list[dict[str, Any]], avp: dict[str, Any]) -> list[dict[str, Any]]:
+    actual_by_id = (
+        {r["id"]: r["actual_pow"] for r in avp.get("rows", [])} if "error" not in avp else {}
+    )
+    return [{**r, "actual_pow": actual_by_id.get(r["id"])} for r in rows]
+
+
+def _render_alert_panel(st, alerts: dict[str, Any]) -> None:
+    with components.panel(height=H_MAIN, key=PANEL_ALERTS):
+        st.markdown(
+            components.panel_header("경고 목록", icon_name="bell", desc="예측치 기반"),
+            unsafe_allow_html=True,
+        )
+        if alerts["errors"]:
+            st.markdown(
+                components.error_state("경고 데이터를 불러오지 못함", artifact=", ".join(alerts["errors"])),
+                unsafe_allow_html=True,
+            )
+            return
+        if not alerts["items"]:
+            st.markdown('<div class="fec-calm">해당 기간 경고 없음</div>', unsafe_allow_html=True)
+            return
+        for it in alerts["items"]:
+            st.markdown(
+                components.alert_row(it["level"], it["title"], it["evidence"], it["time"]),
+                unsafe_allow_html=True,
+            )
+        if alerts["interval_count"] > 20:
+            st.caption(f"예측구간 이탈 {alerts['interval_count']}시간 중 편차 큰 20건만 표시")
+
+
+def _render_period_panel(st, rows, unit, start, end, forecast_ok) -> None:
+    shown_unit = unit if unit != "시간" else "일"
+    with components.panel(height=H_BOTTOM, key=PANEL_PERIOD):
+        st.markdown(
+            components.panel_header("일/주 단위 예측 전력량", icon_name="chart", desc=f"{shown_unit} 단위"),
+            unsafe_allow_html=True,
+        )
+        if not forecast_ok:
+            st.markdown(
+                components.error_state(artifact=tools_mod.PREDICTIONS_NAME), unsafe_allow_html=True
+            )
+            return
+        buckets = page_logic.resample_rows(
+            rows, shown_unit, ("pred_pow", "pred_carbon"), start=start, end=end
+        )
+        st.plotly_chart(
+            charts.period_bar_chart(buckets, height=theme.chart_height(H_BOTTOM, has_caption=True)),
+            width="stretch", config=charts.PLOTLY_CONFIG,
+        )
+        st.caption("연한 막대 = 부분 구간 (5/10 토요일 시작)")
+
+
+def _render_cost_panel(st, totals, settings, forecast_ok) -> None:
+    with components.panel(height=H_BOTTOM, key=PANEL_COST):
+        st.markdown(
+            components.panel_header("총비용 요약", icon_name="chart", tone="bill"),
+            unsafe_allow_html=True,
+        )
+        if not forecast_ok:
+            st.markdown(
+                components.error_state(artifact=tools_mod.PREDICTIONS_NAME), unsafe_allow_html=True
+            )
+            return
+        cost = totals["carbon_cost"]
+        rows = [
+            ["전기요금", fmt.fmt_bill(totals["bill"]), f"Σ pred_pow × {settings['bill_rate']:g}"],
+            [
+                "예상 탄소비용(가정)",
+                fmt.fmt_bill(cost) if cost is not None else "단가 미설정",
+                "탄소 합 ÷ 1000 × 단가" if cost is not None else "설정 페이지에서 입력",
+            ],
+            [
+                "합계",
+                fmt.fmt_bill(totals["total_cost"]) if totals["total_cost"] is not None else "—",
+                "전기요금 + 탄소비용",
+            ],
+        ]
+        st.markdown(
+            components.html_table(["항목", "금액(척도)", "계산식"], rows, highlight_rows={2}),
+            unsafe_allow_html=True,
+        )
+        cap = CARBON_UNIT_NOTE
+        if page_logic.rates_differ_from_default(settings) or cost is not None:
+            cap = "설정값 기준 · " + cap
+        st.caption(cap)
+
+
+def _render_report_panel(st, bundle, totals, settings) -> None:
+    status = bundle["module_status"]
+    evaluation = bundle["evaluation"]
+    with components.panel(height=H_BOTTOM, key=PANEL_REPORT):
+        st.markdown(
+            components.panel_header("리포트 요약", icon_name="sparkles", desc="규칙 기반 3줄"),
+            unsafe_allow_html=True,
+        )
+        lines: list[str] = []
+        if totals["n"]:
+            lines.append(
+                f"선택 기간 예측 요금 {fmt.fmt_bill(totals['bill'])}, 탄소 {fmt.fmt_carbon(totals['carbon'])} 수준입니다."
+            )
+        else:
+            lines.append(f"예측 합계: {tools_mod.NO_DATA}.")
+        mae = evaluation.get("mae_hourly_pow") if "error" not in evaluation else None
+        if isinstance(mae, dict):
+            lines.append(f"전력량 MAE(504)는 {fmt.fmt_mae(mae.get('mae504'))}입니다 (참고용, 합격 기준 아님).")
+        else:
+            lines.append(f"MAE: {tools_mod.NO_DATA}.")
+        top = ui_logic.top_anomaly_modules(status, limit=1) if "error" not in status else []
+        if top:
+            t = top[0]
+            lines.append(
+                f"이상 비율이 가장 높은 설비는 {t['module']} ({fmt.fmt_ratio_pct(t['anomaly_ratio'])}), 관찰 기록일 뿐 설비 판정이 아닙니다."
+            )
+        else:
+            lines.append("규칙 기준 이상 징후 설비는 관찰되지 않았습니다.")
+        st.markdown(components.ai_card_lines(lines), unsafe_allow_html=True)
+        st.button(
+            "AI Copilot에서 열기 ›", key="open_copilot", type="tertiary",
+            on_click=nav.go, args=(page_logic.PAGE_COPILOT,),
+        )
+
+
+def _render_top_modules_panel(st, bundle) -> None:
+    status = bundle["module_status"]
+    with components.panel(height=H_BOTTOM, key=PANEL_TOP):
+        st.markdown(
+            components.panel_header("이상 비율 상위 설비", icon_name="anomaly", tone="anomaly"),
+            unsafe_allow_html=True,
+        )
+        if "error" in status:
+            st.markdown(
+                components.error_state(artifact=tools_mod.MODULE_STATUS_NAME), unsafe_allow_html=True
+            )
+            return
+        top = [r for r in ui_logic.top_anomaly_modules(status, limit=5) if r.get("anomaly_count")]
+        if not top:
+            st.markdown('<div class="fec-calm">기록된 이상 징후 설비 없음</div>', unsafe_allow_html=True)
+            return
+        rows = [
+            [r["module"], fmt.fmt_count(r["anomaly_count"]), fmt.fmt_ratio_pct(r["anomaly_ratio"])]
+            for r in top
+        ]
+        st.markdown(
+            components.html_table(["설비", "이상 건수", "이상 비율"], rows), unsafe_allow_html=True
+        )
+        st.caption("관찰 기록일 뿐 설비 판정이 아님 (상태 기준 O-3 미확정)")
+
+
+# ---------------------------------------------------------------------------
+# 두 번째 화면: 예측 근거 (선택 기능, P2)
+# ---------------------------------------------------------------------------
+def _render_flow(st, bundle) -> None:
+    with components.panel(height=H_FLOW, key=PANEL_FLOW):
+        st.markdown(
+            components.panel_header("분석 플로우", icon_name="pulse", desc="원본 → 집계 → 모델 → 예측"),
+            unsafe_allow_html=True,
+        )
+        steps = page_logic.flow_steps(bundle)
+        cols = st.columns(len(steps))
+        for col, s in zip(cols, steps):
+            col.markdown(
+                components.flow_step(s["no"], s["title"], s["value"], s["caption"]),
+                unsafe_allow_html=True,
+            )
+        selection = bundle.get("selection") or {}
+        if "error" not in selection and selection.get("candidate_scores"):
+            worse = [
+                (m, sc) for m, sc in selection["candidate_scores"].items()
+                if m != selection.get("selected_model")
+            ]
+            if worse:
+                with st.expander(f"채택하지 않은 후보 ({len(worse)})"):
+                    for m, sc in worse:
+                        st.write(f"{m}: 검증 MAE {fmt.fmt_mae(sc)} — 선택 모델보다 높아 채택하지 않음")
+
+
+def _render_models(st, bundle) -> None:
+    evaluation = bundle["evaluation"]
+    with components.panel(height=H_LOW, key=PANEL_MODELS):
+        st.markdown(
+            components.panel_header("베이스라인·후보 모델 비교", icon_name="chart", tone="accuracy"),
+            unsafe_allow_html=True,
+        )
+        if "error" in evaluation or not evaluation.get("baseline_comparison"):
+            st.markdown(
+                components.error_state(artifact=tools_mod.EVALUATION_NAME), unsafe_allow_html=True
+            )
+            return
+        selected = ui_logic.selected_baseline_model(evaluation)
+        rows, hl = [], set()
+        for i, row in enumerate(evaluation["baseline_comparison"]):
+            name = row.get("model", "")
+            if name == selected:
+                hl.add(i)
+            rows.append([("● " if name == selected else "") + name, row.get("kind", ""), fmt.fmt_mae(row.get("validation_mae"))])
+        st.markdown(components.html_table(["모델", "종류", "검증 MAE"], rows, highlight_rows=hl), unsafe_allow_html=True)
+        st.caption(f"선택 모델: {selected or tools_mod.NO_DATA} · MAE 73/89는 참고용(합격 기준 아님)")
+
+
+def _render_profile(st, rows, settings, forecast_ok) -> None:
+    with components.panel(height=H_LOW, key=PANEL_PROFILE):
+        st.markdown(
+            components.panel_header("시간대 프로파일", icon_name="clock", desc="0~23시 요금·탄소 평균"),
+            unsafe_allow_html=True,
+        )
+        if not forecast_ok:
+            st.markdown(
+                components.error_state(artifact=tools_mod.PREDICTIONS_NAME), unsafe_allow_html=True
+            )
+            return
+        profile = ui_logic.hourly_profile(rows)
+        st.plotly_chart(
+            charts.hourly_profile_chart(profile, height=theme.chart_height(H_LOW, has_caption=True)),
+            width="stretch", config=charts.PLOTLY_CONFIG,
+        )
+        st.caption("일별 합계는 거의 동일하므로 시간대(0~23시) 평균 프로파일로 표시합니다.")

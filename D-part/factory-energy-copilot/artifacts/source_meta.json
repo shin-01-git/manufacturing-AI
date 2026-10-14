@@ -1,0 +1,532 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-12T15:06:54.481565+00:00",
+  "run_started_at": "2026-10-12T15:06:54.465018+00:00",
+  "elapsed_seconds": 0.016669299991917796,
+  "time_basis": "localtime (KST)",
+  "scan_config": {
+    "max_rows": 1000,
+    "sample_size": 5,
+    "tail_size": 5,
+    "chunk_size": 1048576,
+    "compute_hash": false,
+    "full_scan": false
+  },
+  "source_immutability": {
+    "unchanged": true,
+    "message": "불변 확인",
+    "files": {
+      "Training_CSV": {
+        "length_equal": true,
+        "last_write_time_equal": true,
+        "hash_checked": false,
+        "hash_equal": null,
+        "unchanged": true,
+        "before": {
+          "path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\data\\rtu_data_full_훈련용.csv",
+          "length": 4909245995,
+          "last_write_time": "2026-10-10T12:25:47.569300+00:00",
+          "last_write_time_ns": 1791635147569300000,
+          "sha256": null
+        },
+        "after": {
+          "path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\data\\rtu_data_full_훈련용.csv",
+          "length": 4909245995,
+          "last_write_time": "2026-10-10T12:25:47.569300+00:00",
+          "last_write_time_ns": 1791635147569300000,
+          "sha256": null
+        }
+      },
+      "Validation_CSV": {
+        "length_equal": true,
+        "last_write_time_equal": true,
+        "hash_checked": false,
+        "hash_equal": null,
+        "unchanged": true,
+        "before": {
+          "path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\data\\rtu_ground_truth_may_검증용(5월).csv",
+          "length": 46000,
+          "last_write_time": "2026-10-10T12:21:37.324972+00:00",
+          "last_write_time_ns": 1791634897324971600,
+          "sha256": null
+        },
+        "after": {
+          "path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\data\\rtu_ground_truth_may_검증용(5월).csv",
+          "length": 46000,
+          "last_write_time": "2026-10-10T12:21:37.324972+00:00",
+          "last_write_time_ns": 1791634897324971600,
+          "sha256": null
+        }
+      }
+    }
+  },
+  "files": [
+    {
+      "role": "Training_CSV",
+      "path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\data\\rtu_data_full_훈련용.csv",
+      "length": 4909245995,
+      "last_write_time": "2026-10-10T12:25:47.569300+00:00",
+      "sha256": null,
+      "metadata_before": {
+        "path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\data\\rtu_data_full_훈련용.csv",
+        "length": 4909245995,
+        "last_write_time": "2026-10-10T12:25:47.569300+00:00",
+        "last_write_time_ns": 1791635147569300000,
+        "sha256": null
+      },
+      "metadata_after": {
+        "path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\data\\rtu_data_full_훈련용.csv",
+        "length": 4909245995,
+        "last_write_time": "2026-10-10T12:25:47.569300+00:00",
+        "last_write_time_ns": 1791635147569300000,
+        "sha256": null
+      },
+      "immutability": {
+        "length_equal": true,
+        "last_write_time_equal": true,
+        "hash_checked": false,
+        "hash_equal": null,
+        "unchanged": true,
+        "before": {
+          "path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\data\\rtu_data_full_훈련용.csv",
+          "length": 4909245995,
+          "last_write_time": "2026-10-10T12:25:47.569300+00:00",
+          "last_write_time_ns": 1791635147569300000,
+          "sha256": null
+        },
+        "after": {
+          "path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\data\\rtu_data_full_훈련용.csv",
+          "length": 4909245995,
+          "last_write_time": "2026-10-10T12:25:47.569300+00:00",
+          "last_write_time_ns": 1791635147569300000,
+          "sha256": null
+        }
+      },
+      "header": [
+        "module(equipment)",
+        "timestamp",
+        "localtime",
+        "operation",
+        "voltageR",
+        "voltageS",
+        "voltageT",
+        "voltageRS",
+        "voltageST",
+        "voltageTR",
+        "currentR",
+        "currentS",
+        "currentT",
+        "activePower",
+        "powerFactorR",
+        "powerFactorS",
+        "powerFactorT",
+        "reactivePowerLagging",
+        "accumActiveEnergy"
+      ],
+      "column_count": 19,
+      "schema_column_count": {
+        "expected": 19,
+        "matches": true,
+        "fact_status": "[확인]"
+      },
+      "encoding": "utf-8-sig",
+      "delimiter": ",",
+      "head_samples": [
+        {
+          "module(equipment)": "1(PM-3)",
+          "timestamp": "1733040000000",
+          "localtime": "20241201000000",
+          "operation": "1",
+          "voltageR": "214.38",
+          "voltageS": "214.45",
+          "voltageT": "219.1",
+          "voltageRS": "371.37",
+          "voltageST": "375.45",
+          "voltageTR": "375.39",
+          "currentR": "15.16",
+          "currentS": "15.53",
+          "currentT": "20.65",
+          "activePower": "2961.61",
+          "powerFactorR": "87.31",
+          "powerFactorS": "99.71",
+          "powerFactorT": "89.45",
+          "reactivePowerLagging": "785.37",
+          "accumActiveEnergy": "1955004"
+        },
+        {
+          "module(equipment)": "1(PM-3)",
+          "timestamp": "1733040005000",
+          "localtime": "20241201000005",
+          "operation": "1",
+          "voltageR": "214.05",
+          "voltageS": "211.74",
+          "voltageT": "218.68",
+          "voltageRS": "368.73",
+          "voltageST": "372.74",
+          "voltageTR": "374.74",
+          "currentR": "25.7",
+          "currentS": "7.07",
+          "currentT": "19.75",
+          "activePower": "3017.48",
+          "powerFactorR": "87.54",
+          "powerFactorS": "87.67",
+          "powerFactorT": "94.17",
+          "reactivePowerLagging": "376.57",
+          "accumActiveEnergy": "1955008"
+        },
+        {
+          "module(equipment)": "1(PM-3)",
+          "timestamp": "1733040010000",
+          "localtime": "20241201000010",
+          "operation": "1",
+          "voltageR": "215.79",
+          "voltageS": "214.92",
+          "voltageT": "211.1",
+          "voltageRS": "373.0",
+          "voltageST": "368.94",
+          "voltageTR": "369.69",
+          "currentR": "13.64",
+          "currentS": "14.87",
+          "currentT": "13.7",
+          "activePower": "2408.01",
+          "powerFactorR": "85.46",
+          "powerFactorS": "99.0",
+          "powerFactorT": "94.45",
+          "reactivePowerLagging": "296.08",
+          "accumActiveEnergy": "1955011"
+        },
+        {
+          "module(equipment)": "1(PM-3)",
+          "timestamp": "1733040015000",
+          "localtime": "20241201000015",
+          "operation": "1",
+          "voltageR": "210.39",
+          "voltageS": "214.92",
+          "voltageT": "215.57",
+          "voltageRS": "368.32",
+          "voltageST": "372.8",
+          "voltageTR": "368.89",
+          "currentR": "25.76",
+          "currentS": "26.35",
+          "currentT": "5.8",
+          "activePower": "3289.33",
+          "powerFactorR": "85.24",
+          "powerFactorS": "99.53",
+          "powerFactorT": "95.61",
+          "reactivePowerLagging": "488.48",
+          "accumActiveEnergy": "1955016"
+        },
+        {
+          "module(equipment)": "1(PM-3)",
+          "timestamp": "1733040020000",
+          "localtime": "20241201000020",
+          "operation": "1",
+          "voltageR": "216.71",
+          "voltageS": "216.37",
+          "voltageT": "215.65",
+          "voltageRS": "375.05",
+          "voltageST": "374.13",
+          "voltageTR": "374.43",
+          "currentR": "8.65",
+          "currentS": "29.49",
+          "currentT": "15.09",
+          "activePower": "3069.31",
+          "powerFactorR": "92.81",
+          "powerFactorS": "91.26",
+          "powerFactorT": "91.82",
+          "reactivePowerLagging": "604.7",
+          "accumActiveEnergy": "1955020"
+        }
+      ],
+      "tail_samples": [
+        {
+          "module(equipment)": "1(PM-3)",
+          "timestamp": "1733044975000",
+          "localtime": "20241201012255",
+          "operation": "1",
+          "voltageR": "213.27",
+          "voltageS": "216.6",
+          "voltageT": "214.43",
+          "voltageRS": "372.27",
+          "voltageST": "373.28",
+          "voltageTR": "370.39",
+          "currentR": "26.12",
+          "currentS": "12.42",
+          "currentT": "12.65",
+          "activePower": "2926.37",
+          "powerFactorR": "85.46",
+          "powerFactorS": "96.92",
+          "powerFactorT": "89.22",
+          "reactivePowerLagging": "692.41",
+          "accumActiveEnergy": "1959154"
+        },
+        {
+          "module(equipment)": "1(PM-3)",
+          "timestamp": "1733044980000",
+          "localtime": "20241201012300",
+          "operation": "1",
+          "voltageR": "218.33",
+          "voltageS": "210.96",
+          "voltageT": "212.4",
+          "voltageRS": "371.76",
+          "voltageST": "366.62",
+          "voltageTR": "373.01",
+          "currentR": "21.47",
+          "currentS": "7.31",
+          "currentT": "14.6",
+          "activePower": "2487.94",
+          "powerFactorR": "91.02",
+          "powerFactorS": "93.62",
+          "powerFactorT": "95.64",
+          "reactivePowerLagging": "453.25",
+          "accumActiveEnergy": "1959158"
+        },
+        {
+          "module(equipment)": "1(PM-3)",
+          "timestamp": "1733044985000",
+          "localtime": "20241201012305",
+          "operation": "1",
+          "voltageR": "214.09",
+          "voltageS": "216.13",
+          "voltageT": "213.19",
+          "voltageRS": "372.57",
+          "voltageST": "371.79",
+          "voltageTR": "370.03",
+          "currentR": "26.75",
+          "currentS": "22.26",
+          "currentT": "14.45",
+          "activePower": "3632.1",
+          "powerFactorR": "94.7",
+          "powerFactorS": "98.63",
+          "powerFactorT": "97.51",
+          "reactivePowerLagging": "899.79",
+          "accumActiveEnergy": "1959163"
+        },
+        {
+          "module(equipment)": "1(PM-3)",
+          "timestamp": "1733044990000",
+          "localtime": "20241201012310",
+          "operation": "1",
+          "voltageR": "211.65",
+          "voltageS": "214.99",
+          "voltageT": "211.84",
+          "voltageRS": "369.47",
+          "voltageST": "369.63",
+          "voltageTR": "366.74",
+          "currentR": "16.4",
+          "currentS": "14.61",
+          "currentT": "20.17",
+          "activePower": "2903.08",
+          "powerFactorR": "88.37",
+          "powerFactorS": "97.58",
+          "powerFactorT": "98.91",
+          "reactivePowerLagging": "720.89",
+          "accumActiveEnergy": "1959167"
+        },
+        {
+          "module(equipment)": "1(PM-3)",
+          "timestamp": "1733044995000",
+          "localtime": "20241201012315",
+          "operation": "1",
+          "voltageR": "218.86",
+          "voltageS": "213.27",
+          "voltageT": "217.95",
+          "voltageRS": "374.23",
+          "voltageST": "373.44",
+          "voltageTR": "378.28",
+          "currentR": "21.59",
+          "currentS": "16.74",
+          "currentT": "12.17",
+          "activePower": "2919.39",
+          "powerFactorR": "87.77",
+          "powerFactorS": "86.34",
+          "powerFactorT": "98.65",
+          "reactivePowerLagging": "789.28",
+          "accumActiveEnergy": "1959171"
+        }
+      ],
+      "time_clues": {
+        "localtime": {
+          "first": "20241201000000",
+          "last": "20241201012315"
+        }
+      },
+      "csv_record_count": 1000,
+      "physical_row_count": 1001,
+      "physical_rows_scanned": 1001,
+      "partial": true,
+      "sample_config": {
+        "head_size": 5,
+        "tail_size": 5,
+        "max_rows": 1000
+      },
+      "errors": [],
+      "error_count": 0,
+      "physical_vs_csv_note": "물리 줄 수와 CSV 레코드 수는 인용된 줄바꿈 등으로 다를 수 있다. physical_row_count는 파서가 소비한 물리 CSV 줄 기준이며 전수 품질을 추정하지 않는다.",
+      "unverified_quality": {
+        "time_continuity": "[미확인]",
+        "module_count_and_full_module_list": "[미확인]",
+        "missing_values": "[미확인]",
+        "duplicates": "[미확인]",
+        "all_module_hour_720_counts": "[미확인]"
+      }
+    },
+    {
+      "role": "Validation_CSV",
+      "path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\data\\rtu_ground_truth_may_검증용(5월).csv",
+      "length": 46000,
+      "last_write_time": "2026-10-10T12:21:37.324972+00:00",
+      "sha256": null,
+      "metadata_before": {
+        "path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\data\\rtu_ground_truth_may_검증용(5월).csv",
+        "length": 46000,
+        "last_write_time": "2026-10-10T12:21:37.324972+00:00",
+        "last_write_time_ns": 1791634897324971600,
+        "sha256": null
+      },
+      "metadata_after": {
+        "path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\data\\rtu_ground_truth_may_검증용(5월).csv",
+        "length": 46000,
+        "last_write_time": "2026-10-10T12:21:37.324972+00:00",
+        "last_write_time_ns": 1791634897324971600,
+        "sha256": null
+      },
+      "immutability": {
+        "length_equal": true,
+        "last_write_time_equal": true,
+        "hash_checked": false,
+        "hash_equal": null,
+        "unchanged": true,
+        "before": {
+          "path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\data\\rtu_ground_truth_may_검증용(5월).csv",
+          "length": 46000,
+          "last_write_time": "2026-10-10T12:21:37.324972+00:00",
+          "last_write_time_ns": 1791634897324971600,
+          "sha256": null
+        },
+        "after": {
+          "path": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\data\\rtu_ground_truth_may_검증용(5월).csv",
+          "length": 46000,
+          "last_write_time": "2026-10-10T12:21:37.324972+00:00",
+          "last_write_time_ns": 1791634897324971600,
+          "sha256": null
+        }
+      },
+      "header": [
+        "id",
+        "hourly_pow",
+        "may_bill",
+        "may_carbon",
+        "agg_pow"
+      ],
+      "column_count": 5,
+      "schema_column_count": {
+        "expected": 5,
+        "matches": true,
+        "fact_status": "[확인]"
+      },
+      "encoding": "utf-8-sig",
+      "delimiter": ",",
+      "head_samples": [
+        {
+          "id": "2025-05-10 00:00:00",
+          "hourly_pow": "39072.258992385100",
+          "may_bill": "7033006.618629320000",
+          "may_carbon": "16566.637812771300",
+          "agg_pow": "19731048.8879453"
+        },
+        {
+          "id": "2025-05-10 01:00:00",
+          "hourly_pow": "39092.6051576128",
+          "may_bill": "7036668.9283703000",
+          "may_carbon": "16575.2645868278",
+          "agg_pow": "19731048.8879453"
+        },
+        {
+          "id": "2025-05-10 02:00:00",
+          "hourly_pow": "38988.3500437777",
+          "may_bill": "7017903.0078799900",
+          "may_carbon": "16531.0604185617",
+          "agg_pow": "19731048.8879453"
+        },
+        {
+          "id": "2025-05-10 03:00:00",
+          "hourly_pow": "38851.4066144383",
+          "may_bill": "6993253.1905988900",
+          "may_carbon": "16472.9964045218",
+          "agg_pow": "19731048.8879453"
+        },
+        {
+          "id": "2025-05-10 04:00:00",
+          "hourly_pow": "39227.0699734741",
+          "may_bill": "7060872.5952253400",
+          "may_carbon": "16632.2776687530",
+          "agg_pow": "19731048.8879453"
+        }
+      ],
+      "tail_samples": [
+        {
+          "id": "2025-05-30 20:00:00",
+          "hourly_pow": "39233.2658552749",
+          "may_bill": "7061987.8539494800",
+          "may_carbon": "16634.9047226366",
+          "agg_pow": "19731048.8879453"
+        },
+        {
+          "id": "2025-05-30 21:00:00",
+          "hourly_pow": "38970.1885292629",
+          "may_bill": "7014633.9352673200",
+          "may_carbon": "16523.3599364075",
+          "agg_pow": "19731048.8879453"
+        },
+        {
+          "id": "2025-05-30 22:00:00",
+          "hourly_pow": "38974.2783621716",
+          "may_bill": "7015370.1051908900",
+          "may_carbon": "16525.0940255608",
+          "agg_pow": "19731048.8879453"
+        },
+        {
+          "id": "2025-05-30 23:00:00",
+          "hourly_pow": "39049.9012058629",
+          "may_bill": "7028982.2170553200",
+          "may_carbon": "16557.1581112859",
+          "agg_pow": "19731048.8879453"
+        },
+        {
+          "id": "2025-05-31 00:00:00",
+          "hourly_pow": "39207.0183535555",
+          "may_bill": "7057263.30363999",
+          "may_carbon": "16623.7757819075",
+          "agg_pow": "19731048.8879453"
+        }
+      ],
+      "time_clues": {
+        "id": {
+          "first": "2025-05-10 00:00:00",
+          "last": "2025-05-31 00:00:00"
+        }
+      },
+      "csv_record_count": 505,
+      "physical_row_count": 505,
+      "physical_rows_scanned": 505,
+      "partial": false,
+      "sample_config": {
+        "head_size": 5,
+        "tail_size": 5,
+        "max_rows": 1000
+      },
+      "errors": [],
+      "error_count": 0,
+      "physical_vs_csv_note": "물리 줄 수와 CSV 레코드 수는 인용된 줄바꿈 등으로 다를 수 있다. physical_row_count는 파서가 소비한 물리 CSV 줄 기준이며 전수 품질을 추정하지 않는다.",
+      "unverified_quality": {
+        "time_continuity": "[미확인]",
+        "module_count_and_full_module_list": "[미확인]",
+        "missing_values": "[미확인]",
+        "duplicates": "[미확인]",
+        "all_module_hour_720_counts": "[미확인]"
+      }
+    }
+  ],
+  "physical_vs_csv_note": "물리 줄 수와 CSV 레코드 수가 다를 수 있음을 명시한다."
+}

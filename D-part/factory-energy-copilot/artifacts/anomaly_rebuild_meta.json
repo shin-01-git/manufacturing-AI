@@ -1,0 +1,25 @@
+{
+  "generated_at": "2026-10-13T15:43:21.892908",
+  "source_events": "C:\\Users\\qwer7\\OneDrive\\바탕 화면\\대학\\비교과 프로젝트_제조AI\\artifacts\\anomaly_events.parquet",
+  "total_events_scanned": 7338771,
+  "method_counts": {
+    "unsupervised": 7338771,
+    "rule": 64934
+  },
+  "method_overlap": {
+    "rule_and_unsupervised": 64934
+  },
+  "rule_total": 64934,
+  "rule_by_module": {
+    "13(3호기)": 13049,
+    "15(예비건조기)": 26244,
+    "17(6호기)": 25641
+  },
+  "rule_by_type": {
+    "voltage_low_3phase": 13049,
+    "power_factor_low_3phase": 51885
+  },
+  "status_basis": "rule(3상 동시) anomaly rows / module total 5s rows (from hourly_from_full n)",
+  "status_label_policy": "status='미확정' (O-3 미승인)",
+  "note": "비지도(IsolationForest)는 과탐지(전체 21.8%)로 설비 상태 기준에서 제외. 규칙을 주 기준으로 사용. 방법 비교는 method_counts/overlap 참조."
+}

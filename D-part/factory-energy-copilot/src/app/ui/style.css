@@ -1,0 +1,542 @@
+/* Factory Energy Copilot — single dashboard CSS (steering A-2/A-4/A-8).
+   Design tokens mirror src/app/ui/theme.py. This is the only CSS file.
+   Panels are st.container(border=True); their look is CSS-only — never a
+   markdown <div> wrapping a widget (v2 §A-8). */
+
+/* Colour variables (--fec-*) are generated from the active theme by
+   theme.css_variables() and prepended to this file by theme.load_css(); this
+   file must contain no colour literals (steering A-9). Only sizes live here. */
+:root {
+  --fec-radius: 8px;
+  --fec-gap: 16px;
+  --fec-pad: 20px;
+}
+
+/* Hide the default Streamlit chrome; we draw our own navy top bar. But keep the
+   header element itself laid out (not display:none) so the sidebar expand button
+   it hosts survives — otherwise a collapsed sidebar can never be reopened (버그1).
+   The header is made transparent and height-collapsed instead; the menu/footer
+   stay hidden. */
+header[data-testid="stHeader"] {
+  background: transparent !important;
+  box-shadow: none !important;
+  /* Keep the header's natural height so the sidebar expand control and the
+     top-right toolbar (Deploy / menu) are not clipped. Only the background is
+     made transparent; the controls inside stay at their normal position. */
+}
+/* ...except the sidebar expand control living inside the header, which must stay
+   clickable and on top. Selector names vary across Streamlit versions, so list
+   several candidates to guarantee the expand button is restored. */
+header[data-testid="stHeader"] [data-testid="stSidebarCollapsedControl"],
+header[data-testid="stHeader"] [data-testid="collapsedControl"],
+header[data-testid="stHeader"] [data-testid="stExpandSidebarButton"] {
+  pointer-events: auto;
+}
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"],
+[data-testid="stExpandSidebarButton"] {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto;
+  z-index: 1000;
+}
+/* Collapse (close) button inside the sidebar — keep it visible so the sidebar
+   can be hidden and then reopened via the expand control above. */
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stSidebarCollapseButton"] button {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto;
+}
+#MainMenu { visibility: hidden; }
+footer { visibility: hidden; }
+
+html, body, [data-testid="stAppViewContainer"] {
+  background: var(--fec-bg);
+  color: var(--fec-text);
+  font-family: Pretendard, "Noto Sans KR", -apple-system, "Segoe UI", sans-serif;
+}
+
+/* Header is kept at natural height now, so push main content below it.
+   No max-width: the main area uses the full available width, so collapsing the
+   sidebar lets the content expand to fill the freed space. */
+.block-container { padding-top: 3.2rem; max-width: 100% !important; padding-left: 32px; padding-right: 32px; }
+
+/* Sidebar expand control: align it on the same line as the in-sidebar collapse
+   button (both near the top), not pushed up and clipped. */
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"],
+[data-testid="stExpandSidebarButton"] {
+  top: 0.5rem !important;
+}
+
+/* ===========================================================================
+   Chips
+   =========================================================================== */
+.fec-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--fec-accent-bg);
+  color: var(--fec-accent);
+  border: 1px solid var(--fec-border);
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.fec-chip.fec-chip-muted { background: var(--fec-subtle); color: var(--fec-muted); border-color: var(--fec-border); }
+/* Status chips: status tint background + status text colour (A-9). */
+.fec-chip.fec-chip-ok { background: var(--fec-ok-tint); color: var(--fec-ok-text); }
+.fec-chip.fec-chip-watch { background: var(--fec-watch-tint); color: var(--fec-watch-text); }
+.fec-chip.fec-chip-alert { background: var(--fec-alert-tint); color: var(--fec-alert-text); }
+/* Metric chips: metric tint background + metric text colour (A-9). */
+.fec-chip.fec-chip-power { background: var(--fec-c-power-tint); color: var(--fec-c-power-text); }
+.fec-chip.fec-chip-bill { background: var(--fec-c-bill-tint); color: var(--fec-c-bill-text); }
+.fec-chip.fec-chip-carbon { background: var(--fec-c-carbon-tint); color: var(--fec-c-carbon-text); }
+.fec-chip.fec-chip-accuracy { background: var(--fec-c-accuracy-tint); color: var(--fec-c-accuracy-text); }
+.fec-chip.fec-chip-anomaly { background: var(--fec-c-anomaly-tint); color: var(--fec-c-anomaly-text); }
+.fec-chip.fec-chip-info { background: var(--fec-c-info-tint); color: var(--fec-c-info-text); }
+
+/* ===========================================================================
+   Page title / description
+   =========================================================================== */
+.fec-page-title { font-size: 20px; font-weight: 700; color: var(--fec-text); margin: 2px 0 2px; }
+.fec-page-desc { font-size: 13px; color: var(--fec-muted); margin-bottom: 6px; }
+
+/* ===========================================================================
+   Panels — st.container(border=True). CSS gives the card look; height is set
+   via the container's height arg. (v2 §A-8)
+   =========================================================================== */
+[data-testid="stVerticalBlockBorderWrapper"] {
+  background: var(--fec-surface);
+  border-radius: var(--fec-radius);
+  border-color: var(--fec-border) !important;
+}
+[data-testid="stVerticalBlockBorderWrapper"] > div { padding: 2px; }
+
+.fec-panel-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  height: 28px;
+  margin-bottom: 8px;
+}
+.fec-panel-header .fec-ph-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fec-text);
+}
+.fec-panel-header .fec-ph-icon { color: var(--fec-accent); display: inline-flex; }
+/* Metric panels tint only their header icon with the metric colour (A-9). */
+.fec-panel-header .fec-ph-icon.fec-ph-tone-power { color: var(--fec-c-power); }
+.fec-panel-header .fec-ph-icon.fec-ph-tone-bill { color: var(--fec-c-bill); }
+.fec-panel-header .fec-ph-icon.fec-ph-tone-carbon { color: var(--fec-c-carbon); }
+.fec-panel-header .fec-ph-icon.fec-ph-tone-accuracy { color: var(--fec-c-accuracy); }
+.fec-panel-header .fec-ph-icon.fec-ph-tone-anomaly { color: var(--fec-c-anomaly); }
+.fec-panel-header .fec-ph-icon.fec-ph-tone-info { color: var(--fec-c-info); }
+.fec-panel-header .fec-ph-desc { font-size: 12px; color: var(--fec-muted); }
+
+/* ===========================================================================
+   KPI card — plain HTML block (not a panel) (A-4)
+   =========================================================================== */
+/* Fixed height so all four cards in a row align identically even when the
+   formula/footnote lengths differ (버그2). Flex column pins the title/value to
+   the top; footnote is clamped to 2 lines so the card never grows. */
+.fec-kpi {
+  background: var(--fec-surface);
+  border: 1px solid var(--fec-border);
+  border-radius: var(--fec-radius);
+  padding: var(--fec-pad);
+  /* Fixed height sized to the tallest card's content so title/value/interp/
+     formula/footnote all fit without clipping; the four cards stay identical
+     and keep a gap from the panels below. */
+  height: 248px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin-bottom: 4px;
+  position: relative;
+  /* Tone variables (default = neutral); see .fec-kpi-tone-* below. */
+  --kpi-band: var(--fec-border);
+  --kpi-text: var(--fec-text);
+}
+/* 4px top colour band — absolutely positioned so card height/content don't move. */
+.fec-kpi::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 4px;
+  background: var(--kpi-band);
+}
+.fec-kpi.fec-kpi-tone-power { --kpi-band: var(--fec-c-power); --kpi-text: var(--fec-c-power-text); }
+.fec-kpi.fec-kpi-tone-bill { --kpi-band: var(--fec-c-bill); --kpi-text: var(--fec-c-bill-text); }
+.fec-kpi.fec-kpi-tone-carbon { --kpi-band: var(--fec-c-carbon); --kpi-text: var(--fec-c-carbon-text); }
+.fec-kpi.fec-kpi-tone-accuracy { --kpi-band: var(--fec-c-accuracy); --kpi-text: var(--fec-c-accuracy-text); }
+.fec-kpi.fec-kpi-tone-anomaly { --kpi-band: var(--fec-c-anomaly); --kpi-text: var(--fec-c-anomaly-text); }
+.fec-kpi.fec-kpi-tone-watch { --kpi-band: var(--fec-watch); --kpi-text: var(--fec-watch-text); }
+.fec-kpi.fec-kpi-tone-unknown { --kpi-band: var(--fec-unknown); --kpi-text: var(--fec-unknown-text); }
+.fec-kpi .fec-kpi-title { color: var(--fec-muted); font-size: 0.82rem; margin-bottom: 6px; }
+.fec-kpi .fec-kpi-value {
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--kpi-text);
+  line-height: 1.1;
+}
+.fec-kpi .fec-kpi-unit { color: var(--fec-muted); font-size: 0.74rem; margin-left: 4px; font-weight: 500; }
+/* One-line plain-language reading of the number (STEP 7-2 ③). Sits above the
+   formula; clamped to 2 lines so the four cards keep an identical fixed height. */
+.fec-kpi .fec-kpi-interp {
+  color: var(--fec-text);
+  font-size: 13px;
+  margin-top: 10px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+.fec-kpi .fec-kpi-formula { color: var(--fec-muted); font-size: 0.74rem; margin-top: 8px; }
+.fec-kpi .fec-kpi-footnote {
+  color: var(--fec-muted);
+  font-size: 0.72rem;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* ===========================================================================
+   Calc value card vs AI narration (D4)
+   =========================================================================== */
+.fec-calc {
+  background: var(--fec-subtle);
+  border: 1px solid var(--fec-border);
+  border-radius: var(--fec-radius);
+  padding: 14px 16px;
+  font-variant-numeric: tabular-nums;
+  font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 0.86rem;
+}
+.fec-ai {
+  background: var(--fec-surface);
+  border: 1px solid var(--fec-border);
+  border-left: 3px solid var(--fec-accent);
+  border-radius: var(--fec-radius);
+  padding: 14px 16px;
+}
+.fec-tag {
+  display: inline-block;
+  font-size: 0.72rem;
+  padding: 1px 8px;
+  border-radius: 999px;
+  margin-bottom: 6px;
+}
+.fec-tag-calc { background: var(--fec-subtle-strong); color: var(--fec-text); }
+.fec-tag-ai { background: var(--fec-accent-bg); color: var(--fec-accent); }
+.fec-kv { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; }
+
+/* ===========================================================================
+   Static HTML tables (baseline / method comparison)
+   =========================================================================== */
+.fec-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; font-variant-numeric: tabular-nums; }
+.fec-table th {
+  text-align: left; color: var(--fec-muted); font-weight: 600;
+  padding: 6px 10px; border-bottom: 1px solid var(--fec-border);
+}
+.fec-table td { padding: 6px 10px; border-bottom: 1px solid var(--fec-subtle); }
+.fec-table tr.fec-row-hl td { background: var(--fec-accent-bg); font-weight: 600; }
+
+/* ===========================================================================
+   Alerts
+   =========================================================================== */
+.fec-alert-item {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 8px 12px;
+  border: 1px solid var(--fec-border);
+  border-left: 3px solid var(--fec-watch);
+  border-radius: var(--fec-radius);
+  margin-bottom: 8px;
+  background: var(--fec-surface);
+  font-size: 0.86rem;
+}
+.fec-alert-item.fec-alert-none { border-left-color: var(--fec-ok); color: var(--fec-muted); }
+
+/* ===========================================================================
+   Source chip (copilot)
+   =========================================================================== */
+.fec-source {
+  display: inline-block;
+  font-size: 0.72rem;
+  color: var(--fec-muted);
+  background: var(--fec-subtle);
+  border-radius: 999px;
+  padding: 1px 8px;
+  margin: 2px 4px 2px 0;
+}
+.fec-source.fec-source-none { color: var(--fec-alert-text); background: var(--fec-alert-tint); }
+
+/* ===========================================================================
+   Empty state
+   =========================================================================== */
+.fec-empty {
+  background: var(--fec-surface);
+  border: 1px dashed var(--fec-border);
+  border-radius: var(--fec-radius);
+  padding: var(--fec-pad);
+  color: var(--fec-muted);
+  text-align: center;
+  font-size: 0.86rem;
+}
+
+/* ===========================================================================
+   LLM status chip
+   =========================================================================== */
+.fec-llm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--fec-border);
+}
+.fec-llm.fec-llm-on { background: var(--fec-accent-bg); color: var(--fec-accent); }
+.fec-llm.fec-llm-off { background: var(--fec-subtle); color: var(--fec-muted); }
+
+/* ===========================================================================
+   Breadcrumb (drill-down header)
+   =========================================================================== */
+.fec-breadcrumb { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; color: var(--fec-text); }
+.fec-breadcrumb .fec-crumb-sep { color: var(--fec-muted); }
+
+/* ===========================================================================
+   Three-section drill-down text blocks
+   =========================================================================== */
+.fec-note { font-size: 0.86rem; color: var(--fec-text); border-left: 4px solid var(--fec-border); padding-left: 12px; }
+/* Section colour bands: 관찰 사실=info, 원인 후보=accuracy(indigo), 현장 확인=accent. */
+.fec-note.fec-note-info { border-left-color: var(--fec-c-info); }
+.fec-note.fec-note-cause { border-left-color: var(--fec-c-accuracy); }
+.fec-note.fec-note-check { border-left-color: var(--fec-accent); }
+.fec-note-title { font-size: 0.8rem; font-weight: 600; color: var(--fec-muted); margin-bottom: 4px; }
+
+/* ===========================================================================
+   Footer notice
+   =========================================================================== */
+.fec-footer { color: var(--fec-muted); font-size: 0.78rem; margin-top: var(--fec-gap); }
+
+/* status table — plain look */
+.fec-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+/* ===========================================================================
+   v4 visual system — sidebar navigation, page header, cards (colours via vars)
+   =========================================================================== */
+:root { --fec-gap-v4: 20px; }
+
+/* Even 20px gaps between top-level rows and columns (v4 §1.3). */
+[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] { gap: var(--fec-gap-v4); }
+[data-testid="stMain"] [data-testid="stHorizontalBlock"] { gap: var(--fec-gap-v4); }
+
+[data-testid="stVerticalBlockBorderWrapper"] { border-radius: 12px; box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05); }
+[data-testid="stVerticalBlockBorderWrapper"] > div { padding: 4px; }
+[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stVerticalBlockBorderWrapper"] { box-shadow: none; }
+
+/* Sidebar: 260px column, brand on top, menu, footer pinned to the bottom. */
+section[data-testid="stSidebar"] {
+  background: var(--fec-surface);
+  width: 260px !important;
+  min-width: 260px !important;
+  border-right: 1px solid var(--fec-border);
+}
+section[data-testid="stSidebar"] [data-testid="stSidebarContent"] { padding: 0; }
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] { padding: 20px 16px 16px; height: 100%; }
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] > div,
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] > div > [data-testid="stVerticalBlock"] {
+  min-height: calc(100vh - 56px);
+}
+.fec-brand { display: flex; align-items: center; gap: 12px; padding: 0 4px 22px; }
+.fec-brand-logo {
+  width: 32px; height: 32px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--fec-accent); color: var(--fec-surface); flex: none;
+}
+.fec-brand-title { font-size: 16px; font-weight: 700; color: var(--fec-text); line-height: 1.2; }
+.fec-brand-team { font-size: 12.5px; color: var(--fec-muted); margin-top: 2px; }
+
+.st-key-nav { gap: 4px; }
+.st-key-nav button {
+  justify-content: flex-start; height: 44px; border-radius: 10px; border: 0;
+  background: transparent; color: var(--fec-muted); font-size: 15px; gap: 12px; padding: 0 14px;
+  box-shadow: none;
+}
+.st-key-nav button > div { justify-content: flex-start; width: 100%; }
+.st-key-nav button p { font-size: 15px; text-align: left; }
+.st-key-nav button:hover { background: var(--fec-hover); color: var(--fec-text); }
+.st-key-nav [data-testid="stBaseButton-primary"],
+.st-key-nav button[kind="primary"] {
+  background: var(--fec-accent-bg); color: var(--fec-accent); font-weight: 600;
+}
+.st-key-nav [data-testid="stBaseButton-primary"] p { font-weight: 600; }
+
+.st-key-sidebar_footer { margin-top: auto; padding-top: 16px; border-top: 1px solid var(--fec-border); gap: 8px; }
+.fec-side-note { font-size: 12.5px; color: var(--fec-muted); }
+.st-key-sidebar_footer [data-testid="stSelectbox"] > div > div { border-radius: 10px; border: 1px solid var(--fec-border); }
+.fec-side-llm {
+  display: inline-flex; align-items: center; gap: 8px; width: fit-content; font-size: 12.5px; font-weight: 600;
+  padding: 4px 12px; border-radius: 999px; background: var(--fec-accent-bg); color: var(--fec-accent);
+}
+.fec-side-llm::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--fec-ok-dot); }
+.fec-side-llm.fec-side-llm-off { background: var(--fec-subtle); color: var(--fec-muted); }
+.fec-side-llm.fec-side-llm-off::before { background: var(--fec-faint); }
+
+/* Page header: title + period chip + subtitle | filter bar + bell */
+.fec-page-head { padding-top: 2px; }
+.fec-page-h1 { display: flex; align-items: center; gap: 14px; font-size: 28px; font-weight: 700; color: var(--fec-text); line-height: 1.2; }
+.fec-period {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border-radius: 14px;
+  border: 1px solid var(--fec-accent); color: var(--fec-accent); font-size: 13px; font-weight: 600; white-space: nowrap;
+  background: var(--fec-surface);
+}
+.fec-page-sub { font-size: 15px; color: var(--fec-muted); margin-top: 4px; }
+
+/* Filter bar widgets (header right) */
+.st-key-filterbar [data-testid="stButtonGroup"] { border: 1px solid var(--fec-border); border-radius: 10px; background: var(--fec-surface); padding: 0; overflow: hidden; gap: 0; }
+.st-key-filterbar [data-testid="stButtonGroup"] button { height: 40px; border: 0; border-radius: 0; background: transparent; color: var(--fec-text); }
+.st-key-filterbar [data-testid="stButtonGroup"] button[aria-pressed="true"],
+.st-key-filterbar [data-testid="stButtonGroup"] button[kind="segmented_controlActive"] { background: var(--fec-chip-bg); font-weight: 600; }
+.st-key-filterbar [data-testid="stDateInput"] input { height: 40px; }
+.st-key-filterbar [data-testid="stDateInput"] > div > div { border-radius: 10px; border: 1px solid var(--fec-border); background: var(--fec-surface); }
+.st-key-bell button { height: 40px; border-radius: 10px; border: 1px solid var(--fec-border); background: var(--fec-surface); color: var(--fec-text); padding: 0 12px; }
+.st-key-bell.fec-bell-on button { color: var(--fec-alert-strong); }
+
+/* KPI tile (v4 §2.4) */
+.fec-tile {
+  background: var(--fec-surface); border: 1px solid var(--fec-border); border-radius: 12px; padding: 10px 18px;
+  height: 120px; box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05); display: flex; flex-direction: column; justify-content: center; gap: 4px;
+  overflow: hidden;
+}
+.fec-tile.fec-tile-sm { height: 110px; }
+.fec-tile-top { display: flex; align-items: center; gap: 10px; min-height: 26px; }
+.fec-tile-icon {
+  width: 36px; height: 36px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--fec-accent); color: var(--fec-surface); flex: none;
+}
+.fec-tile-label { font-size: 15px; font-weight: 600; color: var(--fec-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fec-tile-chip { margin-left: auto; font-size: 11.5px; padding: 1px 8px; border-radius: 999px; background: var(--fec-warn-bg); color: var(--fec-warn); border: 1px solid var(--fec-warn-border); white-space: nowrap; }
+.fec-tile-value { display: flex; align-items: baseline; gap: 6px; padding-left: 0; }
+.fec-tile-num { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--fec-text); line-height: 1.15; }
+.fec-tile-unit { font-size: 15px; font-weight: 500; color: var(--fec-muted); }
+.fec-tile-sub { font-size: 12.5px; color: var(--fec-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fec-delta { margin-left: 6px; background: var(--fec-chip-bg); color: var(--fec-text); border-radius: 6px; padding: 1px 7px; font-size: 12px; font-weight: 500; }
+.fec-tile.fec-tile-off { background: var(--fec-calc-inner); }
+.fec-tile.fec-tile-off .fec-tile-icon { background: var(--fec-faint); }
+.fec-tile.fec-tile-off .fec-tile-label, .fec-tile.fec-tile-off .fec-tile-num, .fec-tile.fec-tile-off .fec-tile-sub { color: var(--fec-faint); }
+.fec-tile.fec-tile-power .fec-tile-num { color: var(--fec-c-power-text); }
+.fec-tile.fec-tile-bill .fec-tile-num { color: var(--fec-c-bill-text); }
+.fec-tile.fec-tile-carbon .fec-tile-num { color: var(--fec-c-carbon-text); }
+.fec-tile.fec-tile-accuracy .fec-tile-num { color: var(--fec-c-accuracy-text); }
+.fec-tile.fec-tile-anomaly .fec-tile-num { color: var(--fec-c-anomaly-text); }
+
+/* Alert strip (v4 §2.3) */
+.fec-strip { display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 18px; border-radius: 12px; font-size: 15px; box-sizing: border-box; }
+.fec-strip-warn { background: var(--fec-warn-bg); border: 1px solid var(--fec-warn-border); color: var(--fec-text); }
+.fec-strip-warn svg { color: var(--fec-warn); }
+.fec-strip-ok { background: var(--fec-hover); border: 1px solid var(--fec-border); color: var(--fec-muted); }
+.fec-strip-error { background: var(--fec-alert-bg); border: 1px solid var(--fec-alert-strong); color: var(--fec-alert-text); }
+
+/* Alert rows (v4 §2.5) */
+.fec-arow { display: flex; align-items: center; gap: 12px; padding: 8px 4px; }
+.fec-arow-tile { width: 36px; height: 36px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.fec-arow-warn { background: var(--fec-warn-bg); color: var(--fec-warn); }
+.fec-arow-alert { background: var(--fec-alert-bg); color: var(--fec-alert-strong); }
+.fec-arow-body { flex: 1; min-width: 0; }
+.fec-arow-title { font-size: 15px; font-weight: 600; color: var(--fec-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fec-arow-evi { font-size: 13px; color: var(--fec-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fec-arow-time { font-size: 13px; color: var(--fec-muted); flex: none; }
+.fec-calm { color: var(--fec-muted); font-size: 14px; padding: 12px 4px; }
+
+/* Error state (v3 §8) */
+.fec-error { border: 1px solid var(--fec-alert-strong); background: var(--fec-alert-bg); border-radius: 12px; padding: 16px 18px; color: var(--fec-alert-text); }
+.fec-error-title { font-weight: 600; font-size: 14.5px; }
+.fec-error-file { font-size: 12.5px; margin-top: 4px; font-family: "SFMono-Regular", Menlo, Consolas, monospace; }
+
+/* Analysis-flow step cards (v4 §2.8) */
+.fec-flow { border: 1px solid var(--fec-border); border-radius: 10px; padding: 12px 14px; height: 140px; box-sizing: border-box; background: var(--fec-surface); }
+.fec-flow-head { display: flex; align-items: center; gap: 8px; }
+.fec-flow-no { width: 24px; height: 24px; border-radius: 50%; background: var(--fec-chip-bg); color: var(--fec-text); font-size: 12.5px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }
+.fec-flow-title { font-size: 15px; font-weight: 600; }
+.fec-flow-value { font-size: 24px; font-weight: 700; margin-top: 10px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fec-flow-cap { font-size: 12.5px; color: var(--fec-muted); margin-top: 4px; }
+
+/* Calc box (v4 §2.10) */
+.fec-calc2 { background: var(--fec-calc-bg); border: 1.5px solid var(--fec-calc-border); border-radius: 12px; padding: 12px 14px; }
+.fec-calc2-inner { background: var(--fec-calc-inner); border-radius: 8px; padding: 8px 12px; margin-top: 6px; font-family: "SFMono-Regular", Menlo, Consolas, monospace; font-size: 13px; font-variant-numeric: tabular-nums; }
+.fec-calc2-row { display: flex; justify-content: space-between; gap: 16px; padding: 3px 0; }
+
+/* Panel-header legend */
+.fec-legend { display: flex; gap: 14px; align-items: center; margin-left: auto; font-size: 12.5px; color: var(--fec-muted); }
+.fec-lg { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.fec-lg-line { width: 18px; height: 0; border-top: 2px solid var(--lg); display: inline-block; }
+.fec-lg-dash { width: 18px; height: 0; border-top: 2px dashed var(--lg); display: inline-block; }
+.fec-lg-box { width: 12px; height: 12px; background: var(--lg); opacity: 0.35; border-radius: 2px; display: inline-block; }
+
+/* Pills (anomaly type filter) */
+.st-key-typepills [data-testid="stButtonGroup"] button { height: 36px; border-radius: 18px; border: 1px solid var(--fec-border); background: var(--fec-surface); }
+.st-key-typepills [data-testid="stButtonGroup"] button[aria-pressed="true"] { background: var(--fec-accent); color: var(--fec-surface); border-color: var(--fec-accent); }
+
+/* Chat bubbles (copilot) */
+.st-key-cp_chat [data-testid="stChatMessage"] { border-radius: 14px; }
+
+/* Plain text link-style tertiary buttons */
+button[kind="tertiary"] { color: var(--fec-accent); }
+
+.fec-form-label { font-size: 14.5px; color: var(--fec-text); }
+
+/* Streamlit gives markdown wrappers a -1rem bottom margin (meant for <p>); HTML card
+   blocks must not be shortened by it or the grid gaps collapse. */
+[data-testid="stMarkdownContainer"]:has(> .fec-tile),
+[data-testid="stMarkdownContainer"]:has(> .fec-strip),
+[data-testid="stMarkdownContainer"]:has(> .fec-flow),
+[data-testid="stMarkdownContainer"]:has(> .fec-error),
+[data-testid="stMarkdownContainer"]:has(> .fec-calc2),
+[data-testid="stMarkdownContainer"]:has(> .fec-brand),
+[data-testid="stMarkdownContainer"]:has(> .fec-page-head),
+[data-testid="stMarkdownContainer"]:has(> .fec-side-note),
+[data-testid="stMarkdownContainer"]:has(> .fec-side-llm) { margin-bottom: 0 !important; }
+
+/* Briefing card (AI Copilot) */
+.fec-brief { margin-bottom: 10px; background: var(--fec-surface); border: 1px solid var(--fec-border); border-left: 3px solid var(--fec-accent); border-radius: 12px; padding: 14px 18px; }
+.fec-brief-head { font-size: 13px; color: var(--fec-muted); margin-bottom: 10px; }
+.fec-brief-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
+.fec-brief-kpi { background: var(--fec-hover); border-radius: 8px; padding: 8px 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.fec-brief-kl { font-size: 12px; color: var(--fec-muted); }
+.fec-brief-kv { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fec-brief-lines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.fec-bl { display: grid; grid-template-columns: 20px 108px 1fr; gap: 10px; align-items: start; padding: 2px 0 2px 8px; border-left: 3px solid transparent; font-size: 14px; line-height: 1.5; }
+.fec-bl-watch { border-left-color: var(--fec-warn); background: color-mix(in srgb, var(--fec-warn-bg) 50%, transparent); border-radius: 4px; }
+.fec-bl-alert { border-left-color: var(--fec-alert-strong); background: color-mix(in srgb, var(--fec-alert-bg) 50%, transparent); border-radius: 4px; }
+.fec-bl-no { width: 20px; height: 20px; border-radius: 50%; background: var(--fec-chip-bg); font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; margin-top: 2px; }
+.fec-bl-label { font-weight: 600; color: var(--fec-text); }
+.fec-bl-text { color: var(--fec-text); }
+.fec-bl-text b { font-variant-numeric: tabular-nums; }
+.fec-bchip { display: inline-block; margin: 2px 6px 2px 0; padding: 1px 10px; border-radius: 999px; background: var(--fec-chip-bg); font-size: 13px; }
+.fec-brief-limits { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--fec-border); font-size: 12px; color: var(--fec-muted); }
+.fec-brief-src { margin-top: 6px; font-size: 12px; color: var(--fec-muted); }
