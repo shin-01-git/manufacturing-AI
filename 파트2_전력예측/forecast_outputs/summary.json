@@ -1,0 +1,112 @@
+{
+  "best_model": "lightgbm",
+  "selection_metric": "May validation hourly-power MAE; May is used for selection and is not an independent final test",
+  "cv_best_model": "ridge_1000",
+  "cv_results": [
+    {
+      "model": "ridge_1000",
+      "CV_MAE_hourly_pow": 77.39369300403685
+    },
+    {
+      "model": "ridge_100",
+      "CV_MAE_hourly_pow": 77.47944434350238
+    },
+    {
+      "model": "lightgbm",
+      "CV_MAE_hourly_pow": 78.23856600160586
+    },
+    {
+      "model": "hist_gbdt",
+      "CV_MAE_hourly_pow": 78.26642782066173
+    },
+    {
+      "model": "xgboost",
+      "CV_MAE_hourly_pow": 80.45267337962976
+    },
+    {
+      "model": "seasonal_naive_168",
+      "CV_MAE_hourly_pow": 107.58938867026757
+    }
+  ],
+  "may_holdout_metrics": {
+    "MAE_hourly_pow": 84.34156729230884,
+    "MAE_bill_krw": 15.18148211261556,
+    "MAE_carbon_kg": 0.03576082453193899
+  },
+  "model_comparison": [
+    {
+      "model": "ridge_1000",
+      "CV_MAE_hourly_pow": 77.39369300403685,
+      "MAE_hourly_pow": 88.49914325557138,
+      "MAE_bill_krw": 15.929845786002847,
+      "MAE_carbon_kg": 0.03752363674036242
+    },
+    {
+      "model": "ridge_100",
+      "CV_MAE_hourly_pow": 77.47944434350238,
+      "MAE_hourly_pow": 88.48088399073741,
+      "MAE_bill_krw": 15.92655911833273,
+      "MAE_carbon_kg": 0.03751589481207274
+    },
+    {
+      "model": "lightgbm",
+      "CV_MAE_hourly_pow": 78.23856600160586,
+      "MAE_hourly_pow": 84.34156729230884,
+      "MAE_bill_krw": 15.18148211261556,
+      "MAE_carbon_kg": 0.03576082453193899
+    },
+    {
+      "model": "hist_gbdt",
+      "CV_MAE_hourly_pow": 78.26642782066173,
+      "MAE_hourly_pow": 84.65100938714053,
+      "MAE_bill_krw": 15.237181689685318,
+      "MAE_carbon_kg": 0.03589202798014772
+    },
+    {
+      "model": "xgboost",
+      "CV_MAE_hourly_pow": 80.45267337962976,
+      "MAE_hourly_pow": 89.15466287459591,
+      "MAE_bill_krw": 16.04783931742726,
+      "MAE_carbon_kg": 0.03780157705882877
+    },
+    {
+      "model": "seasonal_naive_168",
+      "CV_MAE_hourly_pow": 107.58938867026757,
+      "MAE_hourly_pow": 124.71759823971017,
+      "MAE_bill_krw": 22.44916768314787,
+      "MAE_carbon_kg": 0.05288026165363743
+    }
+  ],
+  "train_range": {
+    "start": "2024-12-01 00:00:00",
+    "end": "2025-04-29 23:00:00",
+    "valid_hour_rows": 3600
+  },
+  "may_holdout_range": {
+    "start": "2025-05-10 00:00:00",
+    "end": "2025-05-31 00:00:00",
+    "rows": 505
+  },
+  "dashboard_forecast_range": {
+    "start": "2025-04-30 00:00:00",
+    "end": "2025-05-31 23:00:00"
+  },
+  "data_quality": {
+    "equipment_count": 13,
+    "duplicate_module_timestamps_dropped": 0,
+    "expected_samples_per_hour": 9360,
+    "low_coverage_hours": 1,
+    "minimum_sample_coverage": 0.001388888888888889,
+    "maximum_sample_coverage": 1.0
+  },
+  "unit_assumptions": {
+    "activePower": "W",
+    "hourly_pow": "Wh",
+    "electricity_rate_won_per_kwh": 180.0,
+    "carbon_factor_kg_per_kwh": 0.424,
+    "truth_may_bill_to_calculated_bill_median_ratio": 1000.0,
+    "truth_may_carbon_to_calculated_carbon_median_ratio": 1000.0000000000001,
+    "truth_columns_warning": "Truth may_bill/may_carbon are approximately 1000x energy-converted values; derived dashboard estimates use Wh-to-kWh conversion."
+  },
+  "forecast_note": "Recursive forecasts use predicted values as future lags; uncertainty grows with horizon."
+}
