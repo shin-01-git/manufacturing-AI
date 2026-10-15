@@ -125,6 +125,8 @@ def render(
             st, hourly_frame or {}, raw_type, date_range, merged_settings, artifacts_dir
         )
 
+    _render_reasons(st, model)
+
     # 경영진 view: summary only (KPI + 상태표 + 타임라인); detail panels are for the
     # facility / energy roles.
     if not page_logic.role_profile(role)["anomaly_detail"]:
@@ -138,6 +140,67 @@ def render(
         _render_event_log(st, model)
 
     _render_drilldown(st, status, trend, selected, artifacts_dir)
+
+
+_REASON_CACHE: dict[tuple, list] = {}
+
+
+def _cached_reasons(events, status_rows):
+    """6.5만 행 집계(~0.4s)를 rerun마다 하지 않도록 필터 결과의 지문으로 캐시."""
+
+    key = (
+        len(events),
+        str(events[0].get("localtime")) if events else "",
+        str(events[-1].get("localtime")) if events else "",
+        tuple(sorted((r["module"], r.get("anomaly_ratio")) for r in status_rows)),
+    )
+    if key not in _REASON_CACHE:
+        if len(_REASON_CACHE) > 16:
+            _REASON_CACHE.clear()
+        _REASON_CACHE[key] = page_logic.anomaly_reasons(events, status_rows)
+    return _REASON_CACHE[key]
+
+
+def _render_reasons(st, model: dict[str, Any]) -> None:
+    """설비 상태표의 이상 비율 아래: 왜 이상으로 판단했는지(기준·측정값·시각·월별)."""
+
+    reasons = _cached_reasons(model["events"], model["status_rows"])
+    with components.panel(key="an_reasons"):
+        st.markdown(
+            components.panel_header("이상 판단 근거", icon_name="anomaly", tone="anomaly",
+                                    desc="설비 상태표 이상 비율의 이유"),
+            unsafe_allow_html=True,
+        )
+        if not reasons:
+            st.markdown(components.empty_state("선택 조건의 이상 기록 없음"), unsafe_allow_html=True)
+            return
+        cols = st.columns(min(len(reasons), 3))
+        for i, r in enumerate(reasons):
+            with cols[i % len(cols)]:
+                thr = f"{r['threshold']:g}{r['unit']}" if r["threshold"] is not None else "—"
+                ratio = f"{r['ratio'] * 100:.2f}%" if r["ratio"] is not None else "—"
+                months = " · ".join(f"{m[5:]}월 {fmt.fmt_count(n)}" for m, n in r["months"])
+                st.markdown(f"**{r['module']}** — {r['label']} · 이상 비율 {ratio}")
+                st.markdown(
+                    f"- **판단 기준**: 5초 측정값에서 {r['metric']}이 R·S·T **세 상 모두 {thr} 미만**인 행\n"
+                    f"- **측정값**: 중앙 {r['median']:.1f}{r['unit']} "
+                    f"(범위 {r['lo']:.1f}–{r['hi']:.1f}{r['unit']}) → 기준보다 "
+                    f"{r['gap']:.1f}{'%p' if r['unit'] == '%' else r['unit']} 낮음\n"
+                    f"- **건수**: {fmt.fmt_count(r['count'])}행 / 전체 측정 행의 {ratio}\n"
+                    + (f"- **발생 시각**: {r['peak_hour']:02d}시에 집중 ({r['peak_hour_share'] * 100:.1f}%)\n"
+                       if r["peak_hour_share"] >= 1.5 / 24 else
+                       f"- **발생 시각**: 특정 시간대 쏠림 없음 (최다 {r['peak_hour']:02d}시도 "
+                       f"{r['peak_hour_share'] * 100:.1f}% ≈ 1/24)\n")
+                    + 
+                    f"- **기간**: {r['first']:%Y-%m-%d %H:%M} – {r['last']:%Y-%m-%d %H:%M}\n"
+                    f"- **월별**: {months}\n"
+                    f"- **의미**: {r['rule']}"
+                )
+        st.caption(
+            "이상 비율 = 규칙에 걸린 5초 측정 행 ÷ 해당 설비 전체 측정 행. 비율은 1% 안팎이지만 거의 매시간 "
+            "발생해 일시적 사건보다 상시 운전 조건(기준값·설비 특성)을 먼저 확인할 대상입니다. "
+            "비지도 탐지(IsolationForest)는 전체의 21.8%를 이상으로 잡는 과탐지라 상태 판단에서 제외."
+        )
 
 
 def _status_approved() -> bool:
@@ -357,22 +420,20 @@ def _render_tl_chips(st, scoped, module: str, settings: dict[str, Any]) -> None:
     surges = page_logic.surge_days(daily, factor)
 
     ratio_text = fmt.fmt_ratio_pct(ratio)
-    if ratio > 0.9:
-        # 90% 초과 = "상시 발생" — 단정적 판정 문구 금지(C4 금칙어), 완곡 표현만 사용.
-        ratio_caption = f"{ratio_text} · 상시 발생 — 기준값·운전 조건 확인 필요"
-    else:
-        ratio_caption = f"{ratio_text} 가능성 — 시간대 패턴 참고"
 
-    c1, c2, c3 = st.columns(3)
-    c1.markdown(
-        components.chip(f"발생 시간 비율 {ratio_caption}", tone="anomaly"), unsafe_allow_html=True
+    # 칩 3개를 고정 폭 컬럼에 나눠 넣으면 긴 문구가 옆 칩을 덮는다 → 한 줄 flex(줄바꿈 허용)로
+    # 짧은 수치만 칩에 두고, 해석 문구는 칩 아래 캡션 한 줄로 뺀다.
+    chips = [
+        components.chip(f"발생 시간 비율 {ratio_text}", tone="anomaly"),
+        components.chip(f"일평균 {fmt.fmt_count_per_day(avg)}", tone="muted"),
+        components.chip(f"급증일 {fmt.fmt_count(len(surges))}일", tone="watch" if len(surges) else "muted"),
+    ]
+    st.markdown(
+        '<div style="display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 4px">' + "".join(chips) + "</div>",
+        unsafe_allow_html=True,
     )
-    c2.markdown(
-        components.chip(f"일평균 {fmt.fmt_count_per_day(avg)}", tone="muted"), unsafe_allow_html=True
-    )
-    c3.markdown(
-        components.chip(f"급증일 {fmt.fmt_count(len(surges))}일", tone="watch"), unsafe_allow_html=True
-    )
+    if ratio > 0.9:
+        st.caption(f"{module} · 거의 매시간 발생 → 개별 사건보다 상시 상태. 기준값·운전 조건 확인 필요")
 
 
 def _render_tl_daily(st, scoped, modules: list[str], raw_type, settings, height: int) -> None:
@@ -575,33 +636,45 @@ def _detected_by_glyph(detected_by: Any) -> str:
     return f"규칙 {rule} 통계 {stat} IF {iso}"
 
 
+EVENT_ALL = "전체 설비"
+
+
 def _render_event_log(st, model: dict[str, Any]) -> None:
     with components.panel(height=ROW_BOTTOM_H, key=PANEL_EVENTS):
-        st.markdown(
+        head_l, head_r = st.columns([3, 2], vertical_alignment="center")
+        head_l.markdown(
             components.panel_header("이벤트 로그", icon_name="pulse", tone="anomaly"),
             unsafe_allow_html=True,
         )
-        if not model["events"]:
+        events = model["events"]
+        if not events:
             st.markdown(
                 components.empty_state(tools_mod.ANOMALY_EVENTS_NAME),
                 unsafe_allow_html=True,
             )
             return
-        rows = []
-        for ev in model["events"][:200]:
-            rows.append(
-                {
-                    "설비": ev["module"],
-                    "시각": ui_logic.fmt_localtime_short(ev["localtime"]),
-                    "유형": ev["type"],
-                    "값": fmt.fmt_mae(ev["value"]),
-                    "정상범위": ev.get("normal_range", ""),
-                    "탐지": _detected_by_glyph(ev.get("detected_by", "")),
-                }
-            )
+        counts = page_logic.event_counts_by_module(events)
+        labels = [f"{EVENT_ALL} · {fmt.fmt_count(len(events))}건"] + [
+            f"{m} · {fmt.fmt_count(n)}건" for m, n in counts
+        ]
+        choice = head_r.selectbox("설비", labels, key="event_log_module", label_visibility="collapsed")
+        module = None if labels.index(choice) == 0 else counts[labels.index(choice) - 1][0]
+        picked = page_logic.events_for_module(events, module, limit=200)
+        rows = [
+            {
+                "설비": ev["module"],
+                "시각": str(ev["localtime"])[:19].replace("T", " "),
+                "유형": page_logic.type_label(ev["type"]),
+                "값": fmt.fmt_mae(ev["value"]),
+                "정상범위": ev.get("normal_range", ""),
+                "탐지": _detected_by_glyph(ev.get("detected_by", "")),
+            }
+            for ev in picked
+        ]
         st.dataframe(rows, width="stretch", hide_index=True)
+        total = len(events) if module is None else dict(counts)[module]
         st.caption(
-            f"총 {fmt.fmt_count(model['event_count'])}건 (최대 200행 표시). 현재 규칙 3상 동시 이벤트."
+            f"{module or EVENT_ALL} {fmt.fmt_count(total)}건 중 최근 {len(rows)}건 (최신순, 최대 200행)."
         )
 
 

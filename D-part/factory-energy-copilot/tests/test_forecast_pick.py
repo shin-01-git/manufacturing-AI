@@ -75,3 +75,33 @@ def test_anomaly_expected_weekday_hour_mean():
     out = page_logic.anomaly_expected(frame, rows)
     assert out["expected"] == 3.0
     assert page_logic.anomaly_expected(None, rows) is None
+
+
+def test_event_log_module_filter():
+    evs = [
+        {"module": "17", "localtime": "2025-04-01T00:00:00+09:00"},
+        {"module": "17", "localtime": "2025-04-03T00:00:00+09:00"},
+        {"module": "13", "localtime": "2025-04-02T00:00:00+09:00"},
+    ]
+    assert page_logic.event_counts_by_module(evs) == [("17", 2), ("13", 1)]
+    out = page_logic.events_for_module(evs, "17")
+    assert [e["localtime"][:10] for e in out] == ["2025-04-03", "2025-04-01"]
+    assert len(page_logic.events_for_module(evs, None, limit=2)) == 2
+
+
+def test_anomaly_reasons_basis():
+    evs = [{"module": "13", "type": "voltage_low_3phase", "value": v,
+            "localtime": f"2025-0{m}-01T1{h}:00:00+09:00"} for v, m, h in ((200, 3, 0), (204, 4, 1))]
+    out = page_logic.anomaly_reasons(evs, [{"module": "13", "anomaly_ratio": 0.005}])
+    r = out[0]
+    assert r["threshold"] == 210.0 and r["median"] == 202.0 and r["gap"] == 8.0
+    assert r["months"] == [("2025-03", 1), ("2025-04", 1)] and r["ratio"] == 0.005
+    assert page_logic.anomaly_reasons([], []) == []
+
+
+def test_alert_titles_use_feedback_types():
+    trend = {"points": [{"bucket": f"b{i}", "module": "17", "type": "power_factor_low_3phase",
+                         "count": c} for i, c in enumerate([1, 1, 1, 9])]}
+    a = page_logic.build_alerts({"error": {}}, {"error": {}}, trend, page_logic.merged_settings(None))
+    titles = [it["title"] for it in a["items"]]
+    assert titles == ["역률 급감 · 17"]

@@ -301,6 +301,24 @@ def carbon_cost(carbon_total: float, price_per_ton: Any) -> float | None:
 # ---------------------------------------------------------------------------
 # Alerts (§4.1 경고 목록)
 # ---------------------------------------------------------------------------
+# 경고 목록 제목 = 경고 유형(멘토링 피드백 6종 이름). 6종에 대응하지 않는 원천 유형은 원래 이름.
+#   예측범위 이탈·요금 급증 → 비정상 패턴(사용량이 평소/예측 패턴을 벗어남)
+#   3상 저역률 이벤트 급증 → 역률 급감 / 3상 저전압은 6종에 없음 → '3상 저전압' 그대로
+ALERT_TYPE: dict[str, str] = {
+    "interval": config.ANOMALY_TYPE_LABELS["abnormal_pattern"],
+    "bill": config.ANOMALY_TYPE_LABELS["abnormal_pattern"],
+    "power_factor_low_3phase": config.ANOMALY_TYPE_LABELS["power_factor_drop"],
+}
+
+
+def _dominant_type_by_module(trend: dict[str, Any]) -> dict[str, str]:
+    totals: dict[str, dict[str, int]] = {}
+    for p in trend.get("points", []) if "error" not in trend else []:
+        t = totals.setdefault(p["module"], {})
+        t[p.get("type", "")] = t.get(p.get("type", ""), 0) + int(p["count"])
+    return {m: max(t, key=t.get) for m, t in totals.items() if t}
+
+
 def build_alerts(
     avp: dict[str, Any],
     forecast: dict[str, Any],
@@ -346,10 +364,10 @@ def build_alerts(
                     {
                         "level": "warn",
                         "kind": "interval",
-                        "title": f"예측구간 {direction}",
+                        "title": ALERT_TYPE["interval"],
                         "evidence": (
-                            f"실제 {fmt.fmt_pow(r['actual_pow'])} / 경계 {fmt.fmt_pow(bound)} "
-                            f"({fmt.fmt_pow(gap)} 차이)"
+                            f"예측범위 {direction} · 실제 {fmt.fmt_pow(r['actual_pow'])} / "
+                            f"경계 {fmt.fmt_pow(bound)} kWh ({fmt.fmt_pow(gap)} 차이)"
                         ),
                         "time": moment.strftime("%m-%d %H:%M"),
                         "sort": moment,
@@ -377,8 +395,8 @@ def build_alerts(
                     {
                         "level": "warn",
                         "kind": "bill",
-                        "title": "예측 요금 급증 시간대",
-                        "evidence": f"예측 {fmt.fmt_bill(bill)} > 일 평균 {fmt.fmt_bill(mean)} +{pct:g}%",
+                        "title": ALERT_TYPE["bill"],
+                        "evidence": f"예측 요금 급증 · {fmt.fmt_bill(bill)} > 일 평균 {fmt.fmt_bill(mean)} +{pct:g}%",
                         "time": moment.strftime("%m-%d %H:%M"),
                         "sort": moment,
                     }
@@ -390,13 +408,15 @@ def build_alerts(
     else:
         factor = float(settings.get("anomaly_surge_factor", config.DEFAULT_ANOMALY_SURGE_FACTOR))
         surge_modules = ui_logic.surge_warnings(trend, factor=factor)
+        dominant = _dominant_type_by_module(trend)
         for w in surge_modules:
+            raw = dominant.get(w["module"], "")
             items.append(
                 {
                     "level": "alert",
                     "kind": "surge",
-                    "title": f"{w['module']} 이상 급증",
-                    "evidence": f"최대 {fmt.fmt_count(w['peak'])}건 (평소 {w['mean']}건)",
+                    "title": f"{ALERT_TYPE.get(raw, type_label(raw))} · {w['module']}",
+                    "evidence": f"이상 건수 급증 · 최대 {fmt.fmt_count(w['peak'])}건/시 (평소 {w['mean']}건)",
                     "time": "",
                     "sort": datetime.max,
                     "target": PAGE_ANOMALY,
@@ -1094,3 +1114,62 @@ def anomaly_expected(frame: Any, rows: list[dict[str, Any]], *, start: Any = Non
             continue
         exp += by.get((m.weekday(), m.hour), 0) / max(n_wd.get(m.weekday(), 1), 1)
     return {"expected": exp, "hist_start": days.min().date(), "hist_end": days.max().date()}
+
+
+def event_counts_by_module(events: list[dict[str, Any]]) -> list[tuple[str, int]]:
+    """이벤트 로그 설비 선택지: (설비, 건수) 건수 내림차순."""
+
+    from collections import Counter
+
+    return Counter(str(ev.get("module", "")) for ev in events).most_common()
+
+
+def events_for_module(events: list[dict[str, Any]], module: str | None, *, limit: int = 200) -> list[dict[str, Any]]:
+    """설비 하나(None=전체)의 이벤트를 최신순으로 최대 ``limit``건."""
+
+    picked = events if module is None else [ev for ev in events if str(ev.get("module")) == module]
+    return sorted(picked, key=lambda ev: str(ev.get("localtime", "")), reverse=True)[:limit]
+
+
+_REASON_RULE = {
+    "voltage_low_3phase": ("전압", "V", config.VOLTAGE_THRESHOLD,
+                           "3상(R·S·T) 전압이 동시에 기준 미만 → 공급 전압 저하 또는 선로 전압강하 가능성"),
+    "power_factor_low_3phase": ("역률", "%", config.POWER_FACTOR_THRESHOLD,
+                                "3상 역률이 동시에 기준 미만 → 무효전력 비중이 커서 같은 일을 해도 전류·손실 증가"),
+}
+
+
+def anomaly_reasons(events: list[dict[str, Any]], status_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """설비별 '이상이라고 판단한 이유' 근거 수치.
+
+    각 항목: module, type, label, metric, unit, threshold, rule, count, ratio, median, lo, hi, gap,
+    peak_hour, peak_hour_share, months[(YYYY-MM, 건수)], first, last.
+    events = anomaly_events(5초 측정 행 중 규칙에 걸린 행), status_rows = module_status(이상 비율).
+    """
+
+    import pandas as pd
+
+    if not events:
+        return []
+    df = pd.DataFrame(events)
+    if not {"module", "type", "value", "localtime"}.issubset(df.columns):
+        return []
+    t = pd.to_datetime(df["localtime"].astype(str).str[:19], errors="coerce")
+    df = df.assign(t=t, value=pd.to_numeric(df["value"], errors="coerce"))
+    ratio = {r["module"]: float(r.get("anomaly_ratio") or 0.0) for r in status_rows}
+    out = []
+    for (module, raw), g in df.groupby(["module", "type"]):
+        metric, unit, thr, rule = _REASON_RULE.get(raw, (type_label(raw), "", None, "규칙 기준 미만"))
+        hours = g["t"].dt.hour.value_counts()
+        months = g["t"].dt.strftime("%Y-%m").value_counts().sort_index()
+        med = float(g["value"].median())
+        out.append({
+            "module": module, "type": raw, "label": type_label(raw), "metric": metric, "unit": unit,
+            "threshold": thr, "rule": rule, "count": int(len(g)), "ratio": ratio.get(module),
+            "median": med, "lo": float(g["value"].min()), "hi": float(g["value"].max()),
+            "gap": (thr - med) if thr is not None else None,
+            "peak_hour": int(hours.idxmax()), "peak_hour_share": float(hours.max() / len(g)),
+            "months": list(months.items()),
+            "first": g["t"].min(), "last": g["t"].max(),
+        })
+    return sorted(out, key=lambda r: -(r["ratio"] or 0))
