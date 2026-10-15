@@ -62,7 +62,8 @@ def summarize_energy(energy_kwh):
 import os
 import pandas as pd
 
-AGG_PATH = r"C:\Users\82104\Desktop\DONG-EUI UNIVERSITY\d_aggregated.csv"
+# 이 파일과 같은 폴더의 집계본을 읽는다 (어느 컴퓨터에서 받아도 그대로 작동)
+AGG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "d_aggregated.csv")
 
 
 def load_aggregated(path=AGG_PATH):

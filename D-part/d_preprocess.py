@@ -18,9 +18,11 @@ import pandas as pd
 import os
 from datetime import datetime
 
-SRC = r"C:\Users\82104\Desktop\DONG-EUI UNIVERSITY\traing-dataset\rtu_data_full.csv"
-OUT = r"C:\Users\82104\Desktop\DONG-EUI UNIVERSITY\d_aggregated.csv"
-LOG = r"C:\Users\82104\Desktop\DONG-EUI UNIVERSITY\d_preprocess_log.txt"
+# 경로는 이 파일이 있는 폴더 기준 (어느 컴퓨터에서 받아도 그대로 작동)
+BASE = os.path.dirname(os.path.abspath(__file__))
+SRC = os.path.join(BASE, "traing-dataset", "rtu_data_full.csv")
+OUT = os.path.join(BASE, "d_aggregated.csv")
+LOG = os.path.join(BASE, "d_preprocess_log.txt")
 
 CHUNK = 1_000_000
 KWH_DIVISOR = 720   # activePower / 720 = kWh
