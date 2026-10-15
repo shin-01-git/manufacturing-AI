@@ -147,6 +147,14 @@ ANOMALY_STYLE = """\
 ROLE_STYLE = {
     "energy_manager": "에너지 관리자용: 설비 순위·비용 영향·기간 비교를 중심으로 설명하라.",
     "equipment_manager": "현장 담당자용: 발생 시각·설비·점검 항목을 중심으로 설명하라.",
+    "executive": (
+        "경영진용: get_executive_summary를 먼저 호출하라. 결론과 의사결정에 필요한 핵심 지표를 "
+        "맨 앞 3~5줄로 제시하라. 전월 대비 전력량·요금·탄소 증감을 먼저 말하되, 총량 증감과 "
+        "일평균 증감을 함께 밝히고 날짜 수 차이로 생긴 증감을 사용량 변화로 해석하지 마라. "
+        "이어서 탄소 최다 배출 설비 순위·비중과 감축 우선 검토 대상, 이상 징후 설비의 "
+        "에너지 낭비·탄소 증가 가능성과 점검 권고를 구분해 설명하라. 세부 시각 나열은 줄이고, "
+        "전년 대비는 데이터가 없다고 밝혀라."
+    ),
 }
 
 
@@ -160,14 +168,41 @@ QA_FORMAT = """\
 """
 
 
+# (2-c) 경영진(페르소나 3) 보고서 형식 — 결론 먼저, 근거는 get_executive_summary 값만
+EXEC_FORMAT = """\
+경영진 보고서다. 아래 형식으로, 반드시 get_executive_summary 결과에 있는 값만 써서 답하라.
+1. 결론 (3줄 이내): 보고 월의 전력량·요금·탄소 전월 대비 증감(총량)과 일평균 증감을 함께 쓰고,
+   총량 증감 중 날짜 수 차이로 생긴 부분은 사용량 변화가 아니라고 한 문장으로 밝혀라.
+2. 탄소 배출 순위·비중: 상위 설비(reduction_candidates)와 비중, 설비 간 비중 차이(share_spread_pctp)를 밝혀라.
+3. 증가 원인 설비: increase_driver가 있으면 그 설비와 일평균 증가량, 없으면 '늘어난 설비 없음'.
+4. 점검 권고: watch_equipment의 설비별 값만 사용하라. 초과 전력량(excess_kwh)이 있는 설비는
+   에너지 낭비·탄소 증가 가능성으로, pf_low_hours가 0보다 큰 설비만 역률 저하로 설명하라.
+   pf_low_hours가 0보다 큰 설비는 빠뜨리지 말고 반드시 포함하라.
+   고장이라고 단정하지 말고 점검 권고로 써라.
+5. 한계: 전년 대비는 데이터가 없다는 점과 이상 징후는 관찰 사실이라는 점.
+- 결과에 없는 연도·설비·수치를 만들어 쓰지 마라. '전년도' 분석은 존재하지 않는다.
+"""
+
+# 경영진 단순 조회(qa)에도 지키는 규칙
+EXEC_QA_RULE = """\
+[경영진 비교 규칙] 전월 대비를 말할 때는 반드시 총량 증감과 일평균 증감(change.daily_pct)을 함께 써라.
+두 값이 크게 다르면 총량 증감은 날짜 수 차이(예: 2월은 28일, 3월은 31일) 때문이라고 밝히고,
+사용량이 실제로 줄었다/늘었다거나 긍정적·부정적 변화라고 해석하지 마라.
+"""
+
+
 def build_prompt(role_id=None, mode="summary"):
     """역할·모드에 맞는 최종 지시문을 조립해 돌려준다.
-    mode="summary"면 6단계 보고서 형식, mode="qa"면 간결 조회 형식을 포함한다."""
+    mode="summary"면 6단계 보고서 형식(경영진은 EXEC_FORMAT), mode="qa"면 간결 조회 형식."""
     parts = [SYSTEM_PROMPT]
-    if mode == "summary":
+    if mode == "summary" and role_id == "executive":
+        parts.append(EXEC_FORMAT)
+    elif mode == "summary":
         parts.append(REPORT_FORMAT)
     elif mode == "qa":
         parts.append(QA_FORMAT)
+        if role_id == "executive":
+            parts.append(EXEC_QA_RULE)
     parts.append(ANOMALY_STYLE)
     if role_id and role_id in ROLE_STYLE:
         parts.append(ROLE_STYLE[role_id])
@@ -340,6 +375,23 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_executive_summary",
+            "description": ("경영진용 월간 요약. 지정한 달의 전력량·요금·탄소와 전월 대비 증감"
+                            "(총량·일평균), 설비별 탄소 배출 순위·비중, 감축 우선 검토 대상, "
+                            "전월 대비 증가 기여 설비, 이상 징후 설비의 초과 전력량·요금·탄소를 돌려준다. "
+                            "경영 보고, ESG 보고, '이번 달 요약', '전월 대비' 질문이면 호출하라."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "month": {"type": "string",
+                              "description": "보고 월 (예: 2025-04). 생략하면 데이터의 마지막 달."},
+                },
+            },
+        },
+    },
 ]
 
 
@@ -471,6 +523,8 @@ def run_tool(name, args, df=None):
         return q.monthly_compare(df, equipment=args.get("equipment"))
     if name == "analyze_efficiency":
         return q.analyze_efficiency(df, args.get("start"), args.get("end"))
+    if name == "get_executive_summary":
+        return q.executive_summary(df, args.get("month"))
     return {"status": "error", "message": f"알 수 없는 함수: {name}"}
 
 
@@ -553,7 +607,16 @@ def ask(question, role_id=None, df=None, api_key=None, model=MODEL_NAME,
     # (방법2) 보고서 모드일 때, '가장 주의할 설비' 사실도 미리 조회해 쥐여준다.
     #   질문에 특정 달이 있으면 그 달 기준으로, 없으면 전체 기간 기준으로 조회한다.
     prefetch = None
-    if mode == "summary" and df is not None:
+    if role_id == "executive" and df is not None:
+        # 경영진: 월간 요약을 코드가 먼저 조회해 쥐여준다 (질문에 달이 있으면 그 달, 없으면 마지막 달)
+        ex = q.executive_summary(df, q_start[:6] if q_start else None)
+        if isinstance(ex, dict) and ex.get("status") == "ok":
+            messages.append({"role": "system", "content":
+                             "[get_executive_summary 결과 — 코드가 계산한 사실. 이 값만 사용하라]\n"
+                             + json.dumps(ex, ensure_ascii=False)})
+            used.append({"name": "get_executive_summary(prefetch)",
+                         "args": {"month": ex["month"]}, "result": ex})
+    elif mode == "summary" and df is not None:
         prefetch = _prefetch_equipment_facts(df, start=q_start, end=q_end)
         if prefetch:
             messages.append({"role": "system", "content": prefetch["text"]})

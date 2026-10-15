@@ -69,9 +69,46 @@ def render_role_selector(key="role_select"):
     return ids[labels.index(선택라벨)]
 
 
-def render_summary_box(dff, role_id, date_from, date_to):
-    """역할별 핵심 요약을 '큰 숫자 카드 + 한줄 코멘트'로 보여준다."""
+def _pct_text(v):
+    """증감률(%)을 '▲ 1.23%' / '▼ 1.23%' / '-' 로 표시한다."""
+    if v is None:
+        return "-"
+    return f"▲ {v}%" if v > 0 else (f"▼ {abs(v)}%" if v < 0 else "0%")
+
+
+def render_summary_box(dff, role_id, date_from, date_to, full_df=None):
+    """역할별 핵심 요약을 '큰 숫자 카드 + 한줄 코멘트'로 보여준다.
+    full_df: 날짜로 거르기 전 전체 집계본 (경영진 요약의 전월 비교용)."""
     with st.container(border=True):
+        if role_id == "executive":
+            st.markdown("#### 🏢 경영 요약 (월간)")
+            ex = q.executive_summary(full_df if full_df is not None else dff,
+                                     str(date_to)[:7])
+            if ex.get("status") != "ok":
+                st.info(ex.get("message", "요약할 데이터가 없습니다."))
+                return
+            cur, ch = ex["current"], ex["change"] or {}
+
+            def delta(key):
+                # 앞의 +/- 부호로 화살표 방향이 정해진다. 증가=빨강(inverse)
+                v = ch.get(key)
+                return f"{v:+.2f}% 전월 대비" if v is not None else None
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric(f"💡 {ex['month']} 전력량", f"{cur['energy']:,.0f} kWh",
+                      delta("energy_pct"), delta_color="inverse")
+            c2.metric("💰 요금", f"{cur['bill']:,.0f} 원",
+                      delta("bill_pct"), delta_color="inverse")
+            c3.metric("🌍 탄소", f"{cur['carbon']:,.0f} kg",
+                      delta("carbon_pct"), delta_color="inverse")
+            if ch:
+                st.caption(f"👉 일평균 기준 전월 대비 {_pct_text(ch.get('daily_pct'))} — "
+                           f"총량 증감에는 달마다 다른 날짜 수 차이가 섞여 있어, "
+                           f"실제 사용 수준 변화는 일평균으로 판단하세요.")
+            else:
+                st.caption(f"👉 {ex['month']}은 데이터의 첫 달이라 전월 비교가 없습니다.")
+            st.caption(f"👉 감축 우선 검토 대상(탄소 상위): {', '.join(ex['reduction_candidates'])}")
+            return
         if role_id == "equipment_manager":
             st.markdown("#### ⚙️ 설비 요약")
             an = q.detect_power_anomalies(dff, date_from, date_to, sigma=3.0, top=100)
@@ -178,7 +215,7 @@ def render_custom_info(df=None):
     st.divider()
 
     # -------- 역할별 핵심 요약 박스 (맨 위에 한눈 요약) --------
-    render_summary_box(dff, role_id, date_from, date_to)
+    render_summary_box(dff, role_id, date_from, date_to, full_df=df)
     st.divider()
 
     # =========================================================
@@ -384,6 +421,116 @@ def render_custom_info(df=None):
             st.bar_chart(mdf.set_index("month")["kwh"])
             st.caption("※ '전월대비'는 전력량 기준 증감률입니다. "
                        f"대상: {'전체 설비' if eq_arg is None else eq_arg}")
+
+    # =========================================================
+    elif role_id == "executive":
+        render_executive_section(df, date_to)
+
+
+def render_executive_section(df, date_to):
+    """경영진(페르소나 3) 화면: 월 단위 결론 → 원인 설비 → 감축·점검 권고 순서."""
+    st.subheader("🏢 월간 경영 보고")
+    st.caption("경영진 화면은 월 단위 · 전체 설비 기준입니다. (위 설비 선택과 무관)")
+
+    months = [it["month"] for it in q.monthly_compare(df).get("items", [])]
+    if not months:
+        st.info("월별 데이터가 없습니다.")
+        return
+    default = str(date_to)[:7]
+    month = st.selectbox("보고 월", months,
+                         index=months.index(default) if default in months else len(months) - 1,
+                         key="exec_month")
+    ex = q.executive_summary(df, month)
+    if ex.get("status") != "ok":
+        st.info(ex.get("message", "요약할 데이터가 없습니다."))
+        return
+
+    # (1) 핵심 수치: 이번 달 vs 전월
+    st.markdown("#### 1. 핵심 수치 — 전월 대비")
+    cur, prev, ch = ex["current"], ex["previous"], ex["change"]
+    if prev:
+        rows = [
+            ["전력량(kWh)", f"{cur['energy']:,.0f}", f"{prev['energy']:,.0f}", _pct_text(ch["energy_pct"])],
+            ["요금(원)", f"{cur['bill']:,.0f}", f"{prev['bill']:,.0f}", _pct_text(ch["bill_pct"])],
+            ["탄소(kgCO₂)", f"{cur['carbon']:,.0f}", f"{prev['carbon']:,.0f}", _pct_text(ch["carbon_pct"])],
+            ["일평균 전력량(kWh/일)", f"{cur['daily_energy']:,.0f}", f"{prev['daily_energy']:,.0f}",
+             _pct_text(ch["daily_pct"])],
+        ]
+        st.dataframe(pd.DataFrame(rows, columns=["항목", ex["month"], ex["prev_month"], "전월 대비"]),
+                     use_container_width=True, hide_index=True)
+        st.caption(f"측정 시간: {ex['month']} {cur['hours']:,.0f}시간 · {ex['prev_month']} "
+                   f"{prev['hours']:,.0f}시간. 총량 증감은 날짜 수 차이를 포함하므로, "
+                   f"사용 수준이 실제로 바뀌었는지는 '일평균' 줄로 판단하세요.")
+    else:
+        st.info(f"{ex['month']}은 데이터의 첫 달이라 전월 비교가 없습니다. "
+                f"전력량 {cur['energy']:,.0f} kWh · 요금 {cur['bill']:,.0f}원 · 탄소 {cur['carbon']:,.0f} kg")
+    st.caption("※ 전년 대비는 데이터가 2024-12 ~ 2025-04 다섯 달뿐이라 제공할 수 없습니다.")
+
+    # (2) 월별 탄소 추이 (일평균 기준 포함)
+    st.markdown("#### 2. 월별 탄소 추이")
+    trend = []
+    for m in months:
+        e = q.executive_summary(df, m)
+        if e.get("status") == "ok":
+            days = e["current"]["hours"] / 24 if e["current"]["hours"] else 0
+            trend.append({"월": m, "탄소(kg)": e["current"]["carbon"],
+                          "일평균 탄소(kg/일)": round(e["current"]["carbon"] / days, 1) if days else 0})
+    tdf = pd.DataFrame(trend).set_index("월")
+    t1, t2 = st.columns(2)
+    with t1:
+        st.caption("월 총량")
+        st.bar_chart(tdf["탄소(kg)"])
+    with t2:
+        st.caption("일평균 (날짜 수 차이 제거)")
+        st.bar_chart(tdf["일평균 탄소(kg/일)"])
+
+    # (3) 설비별 배출 순위 · 비중 → 감축 우선 검토 대상
+    st.markdown("#### 3. 설비별 탄소 배출 순위 · 비중")
+    rk = pd.DataFrame(ex["carbon_ranking"])
+    rk_disp = pd.DataFrame({
+        "순위": range(1, len(rk) + 1),
+        "설비": rk["equipment"],
+        "탄소(kg)": rk["carbon"].map(lambda v: f"{v:,.0f}"),
+        "비중(%)": rk["share_pct"],
+        "전월 대비(일평균)": rk["daily_change_pct"].map(_pct_text),
+    })
+    st.dataframe(rk_disp, use_container_width=True, hide_index=True)
+    st.success(f"감축 우선 검토 대상 (탄소 상위 {len(ex['reduction_candidates'])}개): "
+               f"{', '.join(ex['reduction_candidates'])}")
+    if ex.get("share_spread_pctp") is not None:
+        st.caption(f"※ 설비 간 배출 비중 차이는 최대 {ex['share_spread_pctp']}%p입니다. "
+                   f"차이가 작을수록 순위는 달마다 바뀔 수 있으니, 투자 판단에는 "
+                   f"여러 달의 순위와 아래 이상 징후를 함께 보세요.")
+    drv = ex.get("increase_driver")
+    if drv:
+        st.warning(f"📈 전월 대비 탄소 증가 기여가 가장 큰 설비: **{drv['equipment']}** — "
+                   f"일평균 탄소 {drv['daily_carbon_change']:+,.1f} kg/일 "
+                   f"({_pct_text(drv['daily_change_pct'])})")
+    elif prev:
+        st.info("전월보다 일평균 탄소가 늘어난 설비가 없습니다.")
+
+    # (4) 이상 징후 설비 → 에너지 낭비·탄소 증가 가능성 (점검 권고)
+    st.markdown("#### 4. 이상 징후 설비 — 점검 권고")
+    # 역률 저하 설비는 매달 반복되는 경우가 많아 초과 전력량 순서와 상관없이 먼저 보여준다
+    watch = ([w for w in ex["watch_equipment"] if w["pf_low_hours"] > 0]
+             + [w for w in ex["watch_equipment"] if w["pf_low_hours"] == 0])
+    if not watch:
+        st.success("이번 달에 관찰된 이상 징후가 없습니다.")
+    for w in watch[:6]:
+        lines = []
+        if w["high_cnt"] > 0:
+            lines.append(f"전력이 평소보다 높았던 시간 {w['high_cnt']}건 · 초과 전력량 약 "
+                         f"{w['excess_kwh']:,.0f} kWh (요금 약 {w['excess_bill']:,.0f}원, "
+                         f"탄소 약 {w['excess_carbon']:,.0f} kg) → 에너지 낭비·탄소 증가 가능성")
+        elif w["anomaly_cnt"] > 0:
+            lines.append(f"전력이 평소보다 낮았던 시간 {w['anomaly_cnt']}건 → 가동 상태 확인 필요")
+        if w["pf_low_hours"] > 0:
+            lines.append(f"역률 70 미만 {w['pf_low_hours']:,}시간 → 전기 효율 저하 가능성")
+        st.warning(f"⚠️ **{w['equipment']}** — " + " / ".join(lines) + ". 점검 권고 (고장 단정 아님)")
+    if len(watch) > 6:
+        st.caption(f"외 {len(watch) - 6}개 설비는 맞춤 정보(설비 관리 담당자) 화면에서 확인하세요.")
+    st.caption("※ 이상 징후는 전력 3σ · 역률 70 미만 기준으로 관찰된 사실입니다. "
+               "점검 승인 여부는 현장 확인 결과와 함께 판단하세요.")
 
 
 # ------------------------------------------------------------

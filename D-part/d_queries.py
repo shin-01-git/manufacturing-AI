@@ -481,6 +481,148 @@ def monthly_compare(df, equipment=None):
     return {"status": "ok", "items": items}
 
 
+# ------------------------------------------------------------
+# [경영진 요약] 페르소나 3(공장 운영 총괄 임원)용 월간 요약.
+#   - 전월 대비 전력량·요금·탄소 증감을 '총량'과 '일평균' 두 기준으로 준다.
+#     달마다 날짜 수가 달라(2월 28일, 3월 31일 등) 총량 증감은 날짜 수 차이를
+#     그대로 반영하므로, 실제 사용 수준 변화는 일평균으로 비교해야 한다.
+#   - 일평균 = 그 달 전력량 ÷ (측정된 시간 수 ÷ 24)
+#   - 설비별 탄소 배출 순위·비중과 전월 대비(일평균) 증감, 증가 기여 설비.
+#   - 이상 징후 설비: 기존 기준(전력 3σ, 역률 70 미만)으로 관찰된 설비와
+#     평소보다 높았던 시간의 초과 전력량·요금·탄소 (점검 권고, 고장 단정 아님).
+#   - 전년 대비는 데이터가 5개월(2024-12 ~ 2025-04)뿐이라 제공할 수 없다.
+# ------------------------------------------------------------
+def _pct(cur, prev):
+    if prev is None or prev == 0:
+        return None
+    return round((cur - prev) / prev * 100, 2)
+
+
+def executive_summary(df, month=None, top=3, pf_threshold=70.0):
+    """경영진용 월간 요약. df 는 날짜로 거르기 전의 전체 집계본(전월 비교용).
+    month: 'YYYY-MM' 또는 'YYYYMM'. 없으면 데이터의 마지막 달.
+    top: 감축 우선 검토 대상으로 표시할 탄소 상위 설비 수."""
+    if df is None:
+        return _NO_DATA
+    hours = df["hour"].astype(str)
+    month_key = hours.str[:6]
+    months = sorted(month_key.unique())
+    m = str(month).replace("-", "")[:6] if month else months[-1]
+    if m not in months:
+        return {"status": "empty", "month": month,
+                "message": f"{month} 데이터가 없습니다. 데이터 기간: "
+                           f"{months[0][:4]}-{months[0][4:]} ~ {months[-1][:4]}-{months[-1][4:]}"}
+    idx = months.index(m)
+    prev_m = months[idx - 1] if idx > 0 else None
+
+    def totals(mm):
+        sub = df[month_key == mm]
+        kwh = float(sub["kwh_sum"].sum())
+        n_hours = int(sub["hour"].nunique())
+        days = n_hours / 24 if n_hours else 0
+        daily = kwh / days if days else 0
+        return sub, {"energy": kwh, "bill": calc_bill(kwh), "carbon": calc_carbon(kwh),
+                     "hours": n_hours,
+                     "daily_energy": daily,
+                     "daily_bill": calc_bill(daily),
+                     "daily_carbon": calc_carbon(daily)}
+
+    cur_sub, cur = totals(m)
+    prev_sub, prev = totals(prev_m) if prev_m else (None, None)
+
+    change = None
+    if prev:
+        change = {
+            "energy_pct": _pct(cur["energy"], prev["energy"]),        # 총량 기준
+            "bill_pct": _pct(cur["bill"], prev["bill"]),
+            "carbon_pct": _pct(cur["carbon"], prev["carbon"]),
+            "daily_pct": _pct(cur["daily_energy"], prev["daily_energy"]),  # 일평균 기준
+        }
+
+    # 설비별 탄소 순위 · 비중 · 전월 대비(일평균) 증감
+    cur_eq = cur_sub.groupby("module(equipment)")["kwh_sum"].sum()
+    prev_eq = prev_sub.groupby("module(equipment)")["kwh_sum"].sum() if prev_m else None
+    cur_days = cur["hours"] / 24
+    prev_days = prev["hours"] / 24 if prev else None
+    total_kwh = float(cur_eq.sum())
+    ranking = []
+    for eq, kwh in cur_eq.sort_values(ascending=False).items():
+        kwh = float(kwh)
+        daily = kwh / cur_days if cur_days else 0
+        p_daily = None
+        if prev_eq is not None and eq in prev_eq.index and prev_days:
+            p_daily = float(prev_eq[eq]) / prev_days
+        ranking.append({
+            "equipment": eq,
+            "kwh": round(kwh, 1),
+            "carbon": round(calc_carbon(kwh), 1),
+            "bill": round(calc_bill(kwh), 0),
+            "share_pct": round(kwh / total_kwh * 100, 2) if total_kwh else 0,
+            "daily_change_pct": _pct(daily, p_daily),
+            "daily_carbon_change": (round(calc_carbon(daily - p_daily), 1)
+                                    if p_daily is not None else None),
+        })
+    # 증가 기여 설비: 일평균 탄소가 전월보다 가장 많이 늘어난 설비 (늘어난 설비가 없으면 None)
+    increased = [r for r in ranking if (r["daily_carbon_change"] or 0) > 0]
+    increase_driver = max(increased, key=lambda r: r["daily_carbon_change"]) if increased else None
+    shares = [r["share_pct"] for r in ranking]
+    share_spread = round(max(shares) - min(shares), 2) if shares else None
+
+    # 이상 징후 설비 (기존 기준 그대로: 전력 3σ / 역률 70 미만)
+    start, end = f"{m}0100", f"{m}3123"
+    an = detect_power_anomalies(df, start, end, sigma=3.0, top=100000)
+    # 그 시간의 측정 수 n (1시간 = 720). 측정이 적은 시간은 초과분도 그만큼만 센다.
+    n_by_key = {(e, str(h)): int(n) for e, h, n in
+                zip(cur_sub["module(equipment)"], cur_sub["hour"], cur_sub["n"])}
+    by_eq = {}
+    for it in an.get("items", []):
+        d = by_eq.setdefault(it["equipment"], {"anomaly_cnt": 0, "high_cnt": 0, "excess_kwh": 0.0})
+        d["anomaly_cnt"] += 1
+        if it["direction"] == "높음":
+            d["high_cnt"] += 1
+            # 평소보다 높았던 시간의 초과분 = (그 시간 평균 전력 - 평소 평균) × 측정 비율
+            n = n_by_key.get((it["equipment"], str(it["hour"])), 720)
+            d["excess_kwh"] += (float(it["power"]) - float(it["normal_mean"])) * n / 720
+    pf_low = cur_sub[cur_sub["pf_min"] < pf_threshold].groupby("module(equipment)").size()
+    watch = []
+    for eq in sorted(set(by_eq) | set(pf_low.index)):
+        d = by_eq.get(eq, {"anomaly_cnt": 0, "high_cnt": 0, "excess_kwh": 0.0})
+        excess = round(d["excess_kwh"], 1)
+        watch.append({
+            "equipment": eq,
+            "anomaly_cnt": d["anomaly_cnt"],
+            "high_cnt": d["high_cnt"],
+            "excess_kwh": excess,
+            "excess_bill": round(calc_bill(excess), 0),
+            "excess_carbon": round(calc_carbon(excess), 1),
+            "pf_low_hours": int(pf_low.get(eq, 0)),
+        })
+    # 역률 저하 설비를 먼저(매달 반복되는 경우가 많음), 그다음 초과 전력량이 큰 순
+    watch.sort(key=lambda x: (x["pf_low_hours"] == 0, -x["excess_kwh"], -x["pf_low_hours"]))
+
+    def ym(x):
+        return f"{x[:4]}-{x[4:6]}" if x else None
+
+    return {
+        "status": "ok",
+        "month": ym(m),
+        "prev_month": ym(prev_m),
+        "current": {k: round(v, 1) for k, v in cur.items()},
+        "previous": {k: round(v, 1) for k, v in prev.items()} if prev else None,
+        "change": change,
+        "carbon_ranking": ranking,
+        "share_spread_pctp": share_spread,   # 설비 간 배출 비중 최대-최소 차이(%p)
+        "reduction_candidates": [r["equipment"] for r in ranking[:top]],
+        "increase_driver": increase_driver,
+        "watch_equipment": watch,
+        "notes": [
+            "총량 증감은 달마다 날짜 수가 달라 생기는 차이를 포함한다. 사용 수준 변화는 일평균 기준으로 본다.",
+            "이상 징후는 전력 3σ·역률 70 미만 기준의 관찰 사실이며 고장을 뜻하지 않는다.",
+            "전년 대비는 데이터가 2024-12 ~ 2025-04 다섯 달뿐이라 제공할 수 없다.",
+        ],
+    }
+
+
 def analyze_efficiency(df, start=None, end=None,
                        pf_mean_threshold=85.0, pf_min_threshold=80.0,
                        low_op_threshold=0.5, top=10):
