@@ -84,7 +84,7 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> None:
         with left:
             _render_models(st, bundle)
         with right:
-            _render_profile(st, rows, settings, forecast_ok)
+            _render_profile(st, rows, settings, forecast_ok, bundle.get("actual_vs_pred", {}))
 
 
 # ---------------------------------------------------------------------------
@@ -252,8 +252,9 @@ def _render_chart(st, bundle, ctx, rows, profile) -> None:
             {
                 "id": b["key"],
                 "pred_pow": (b["pred_pow"] or 0.0) * rate,
-                "pred_low": None if b["pred_low"] is None else b["pred_low"] * rate,
-                "pred_high": None if b["pred_high"] is None else b["pred_high"] * rate,
+                # 시간별 P5/P95를 더한 값은 일·주 합의 P5/P95가 아니므로 시간 단위에서만 표시
+                "pred_low": None if (unit != "시간" or b["pred_low"] is None) else b["pred_low"] * rate,
+                "pred_high": None if (unit != "시간" or b["pred_high"] is None) else b["pred_high"] * rate,
             }
             for b in buckets
         ]
@@ -266,7 +267,13 @@ def _render_chart(st, bundle, ctx, rows, profile) -> None:
             metric=metric, color=theme.COLOR["accent"],
         )
         st.plotly_chart(fig, width="stretch", config=charts.PLOTLY_CONFIG)
-        note = "y축 0에서 시작하지 않음 · 예측구간은 임시/잠정값" + ("" if unit == "시간" else " · 부분 구간 제외")
+        vals = [r["pred_pow"] for r in chart_rows]
+        spread = max(vals) - min(vals) if vals else 0.0
+        pct = spread / (sum(vals) / len(vals)) * 100 if vals and sum(vals) else 0.0
+        note = (
+            f"y축 확대(0 시작 아님) · 최대-최소 차이 {spread:,.2f} {config.UNIT_LABELS[metric]} ({pct:.2f}%)"
+            + (" · 예측구간 P5–P95 잠정" if unit == "시간" else " · 부분 구간 제외 · 구간 밴드는 시간 단위에서만")
+        )
         if show_actual and "error" in avp:
             note = "실제값 artifact(actual_vs_pred.csv)를 불러오지 못해 예측만 표시합니다."
         st.caption(note)
@@ -276,8 +283,8 @@ def _basis_sentence(bundle: dict[str, Any], settings: dict[str, Any]) -> str:
     b = page_logic.forecast_basis(bundle)
     d = lambda v: v if v else "—"  # noqa: E731
     return (
-        f"학습 {d(b['train_start'])}~{d(b['train_end'])} 시간별 전력량으로 학습한 {d(b['model'])} 모델이 "
-        f"요일·시간대 특성만으로 {d(b['pred_start'])}~{d(b['pred_end'])} 1시간 단위 "
+        f"학습 {d(b['train_start'])} – {d(b['train_end'])} 시간별 전력량으로 학습한 {d(b['model'])} 모델이 "
+        f"요일·시간대 특성만으로 {d(b['pred_start'])} – {d(b['pred_end'])} 1시간 단위 "
         f"{d(b['points'])}개 시점을 예측 · 요금=전력량×{settings['bill_rate']:g}, "
         f"탄소=전력량×{settings['carbon_rate']:g}"
     )
@@ -491,10 +498,10 @@ def _render_models(st, bundle) -> None:
         st.caption(f"선택 모델: {selected or tools_mod.NO_DATA} · MAE 73/89는 참고용(합격 기준 아님)")
 
 
-def _render_profile(st, rows, settings, forecast_ok) -> None:
+def _render_profile(st, rows, settings, forecast_ok, avp=None) -> None:
     with components.panel(height=H_LOW, key=PANEL_PROFILE):
         st.markdown(
-            components.panel_header("시간대 프로파일", icon_name="clock", desc="0~23시 요금·탄소 평균"),
+            components.panel_header("시간대 프로파일", icon_name="clock", desc="0–23시 평균 전력량 · 예측 vs 실제"),
             unsafe_allow_html=True,
         )
         if not forecast_ok:
@@ -502,9 +509,19 @@ def _render_profile(st, rows, settings, forecast_ok) -> None:
                 components.error_state(artifact=tools_mod.PREDICTIONS_NAME), unsafe_allow_html=True
             )
             return
-        profile = ui_logic.hourly_profile(rows)
+        pred = page_logic.hour_of_day_mean(rows, "pred_pow")
+        act_rows = (avp or {}).get("rows", []) if "error" not in (avp or {}) else []
+        act = page_logic.hour_of_day_mean(act_rows, "actual_pow") if act_rows else []
         st.plotly_chart(
-            charts.hourly_profile_chart(profile, height=theme.chart_height(H_LOW, has_caption=True)),
+            charts.hourly_profile_chart(
+                [{"hour": h, "pow": v} for h, v in enumerate(pred)],
+                actual=act or None, height=theme.chart_height(H_LOW, has_caption=True),
+            ),
             width="stretch", config=charts.PLOTLY_CONFIG,
         )
-        st.caption("일별 합계는 거의 동일하므로 시간대(0~23시) 평균 프로파일로 표시합니다.")
+        if pred:
+            st.caption(
+                f"y축 확대 · 시간대별 차이 예측 {max(pred) - min(pred):.3f} kWh"
+                + (f" / 실제 {max(act) - min(act):.3f} kWh" if act else "")
+                + " · 요금(×180)·탄소(×0.424)는 같은 모양이라 전력량으로 표시"
+            )

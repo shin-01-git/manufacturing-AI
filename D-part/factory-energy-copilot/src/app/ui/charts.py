@@ -162,14 +162,14 @@ def forecast_band_chart(
         )
 
     # Zoom the y-axis to the data range (A-0): never start at 0.
-    all_vals = [v for v in pow_vals if v is not None]
+    from src.app import page_logic
+
+    all_vals = [v for v in pow_vals if v is not None] + [p[1] for p in actual_pairs]
     if has_band:
         all_vals += [v for v in lows if v is not None] + [v for v in highs if v is not None]
-    all_vals += out_y
-    if all_vals:
-        lo, hi = min(all_vals), max(all_vals)
-        pad = (hi - lo) * 0.1 or (abs(hi) * 0.001 + 1.0)
-        fig.update_yaxes(range=[lo - pad, hi + pad])
+    rng = page_logic.zoom_range(all_vals)  # 값 변화폭의 ±20% → 작은 차이도 보이게
+    if rng:
+        fig.update_yaxes(range=list(rng))
 
     fig.update_layout(
         template=_TPL,
@@ -182,7 +182,7 @@ def forecast_band_chart(
     return fig
 
 
-def hourly_profile_chart(hour_rows: list[dict[str, Any]], *, height: int = 320):
+def hourly_profile_chart(hour_rows: list[dict[str, Any]], *, height: int = 320, actual: list[float] | None = None):
     """0–23시 average bill/carbon profile line chart (A-0 replacement for bars).
 
     ``hour_rows`` = ``[{"hour": int, "bill": float, "carbon": float}, ...]``.
@@ -195,6 +195,32 @@ def hourly_profile_chart(hour_rows: list[dict[str, Any]], *, height: int = 320):
         return _empty_fig(fmt.NO_DATA)
 
     _ensure_template()
+    if "pow" in hour_rows[0]:
+        # 요금·탄소는 전력량 × 고정 계수라 모양이 같다 → 전력량 하나로 예측 vs 실제 비교
+        from src.app import page_logic
+
+        hours = [r["hour"] for r in hour_rows]
+        pred = [r["pow"] for r in hour_rows]
+        fig = go.Figure()
+        if actual:
+            fig.add_trace(go.Scatter(
+                x=hours, y=actual, name="실제(5월 평균)", mode="lines+markers",
+                line=dict(color=theme.COLOR["actual"], width=2), marker=dict(size=5),
+                customdata=[fmt.fmt_pow(v) for v in actual],
+                hovertemplate="%{x}시<br>실제 %{customdata} kWh<extra></extra>",
+            ))
+        fig.add_trace(go.Scatter(
+            x=hours, y=pred, name="예측(평균)", mode="lines+markers",
+            line=dict(color=theme.COLOR["accent"], width=2), marker=dict(size=5),
+            customdata=[fmt.fmt_pow(v) for v in pred],
+            hovertemplate="%{x}시<br>예측 %{customdata} kWh<extra></extra>",
+        ))
+        rng = page_logic.zoom_range(pred + (actual or []))
+        fig.update_layout(
+            template=_TPL, height=height, hovermode="x unified",
+            xaxis=dict(title="시(0~23)", dtick=2), yaxis=dict(title="시간당 전력량(kWh)", range=list(rng) if rng else None),
+        )
+        return fig
     hours = [r["hour"] for r in hour_rows]
     bills = [r["bill"] for r in hour_rows]
     carbons = [r["carbon"] for r in hour_rows]

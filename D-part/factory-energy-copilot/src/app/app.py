@@ -162,7 +162,7 @@ def _render_header(page: str, period: dict, alerts: dict) -> dict:
     start, end = period.get("start"), period.get("end")
     with right:
         with st.container(key="filterbar"):
-            c_gran, c_date, c_bell = st.columns([3, 4, 1.2], vertical_alignment="center")
+            c_gran, c_date, c_bell = st.columns([4.4, 3.6, 1], vertical_alignment="center")
             if page in page_logic.PAGES_WITH_GRANULARITY:
                 with c_gran:
                     chosen = st.segmented_control(

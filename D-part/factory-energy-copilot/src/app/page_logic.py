@@ -916,3 +916,20 @@ def forecast_basis(bundle: dict[str, Any]) -> dict[str, Any]:
         out["pred_end"] = str(fc.get("end"))[:16] if fc.get("end") else None
         out["points"] = int(fc["count"])
     return out
+
+
+def hour_of_day_mean(rows: list[dict[str, Any]], field: str) -> list[float]:
+    """0~23시별 평균 (id 'YYYY-MM-DD HH:..'). 값이 없는 시는 앞뒤와 무관하게 제외하지 않고 0개면 빈 목록."""
+
+    acc = [0.0] * 24
+    cnt = [0] * 24
+    for r in rows:
+        dt = _row_dt(r.get("id", ""))
+        v = r.get(field)
+        if dt is None or v is None:
+            continue
+        acc[dt.hour] += float(v)
+        cnt[dt.hour] += 1
+    if not any(cnt):
+        return []
+    return [acc[h] / cnt[h] if cnt[h] else float("nan") for h in range(24)]
