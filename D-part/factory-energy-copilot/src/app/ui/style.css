@@ -448,6 +448,8 @@ section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] > div > [d
 .fec-delta { margin-left: 6px; background: var(--fec-chip-bg); color: var(--fec-text); border-radius: 6px; padding: 1px 7px; font-size: 12px; font-weight: 500; }
 .fec-tile.fec-tile-off { background: var(--fec-calc-inner); }
 .fec-tile.fec-tile-off .fec-tile-icon { background: var(--fec-faint); }
+/* 경고 건수: 경고 목록 행과 같은 노란 경고 아이콘 */
+.fec-tile-icon.fec-tile-icon-warn { background: var(--fec-warn-bg); color: var(--fec-warn); border: 1px solid var(--fec-warn-border); }
 .fec-tile.fec-tile-off .fec-tile-label, .fec-tile.fec-tile-off .fec-tile-num, .fec-tile.fec-tile-off .fec-tile-sub { color: var(--fec-faint); }
 .fec-tile.fec-tile-power .fec-tile-num { color: var(--fec-c-power-text); }
 .fec-tile.fec-tile-bill .fec-tile-num { color: var(--fec-c-bill-text); }

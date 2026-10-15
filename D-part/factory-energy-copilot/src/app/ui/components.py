@@ -343,6 +343,7 @@ def kpi_tile(
     chip_text: str = "",
     disabled: bool = False,
     compact: bool = False,
+    icon_tone: str = "",
 ) -> str:
     """v4 KPI card: optional accent icon circle + label + big number + formula line.
 
@@ -360,7 +361,8 @@ def kpi_tile(
     if tone in theme.METRIC_KEYS and not disabled:
         cls += f" fec-tile-{tone}"
     icon_html = (
-        f'<span class="fec-tile-icon">{icons.icon(icon_name, size=20)}</span>' if icon_name else ""
+        f'<span class="fec-tile-icon{" fec-tile-icon-warn" if icon_tone == "warn" else ""}">'
+        f'{icons.icon(icon_name, size=20)}</span>' if icon_name else ""
     )
     unit_html = f'<span class="fec-tile-unit">{_esc(unit)}</span>' if unit else ""
     chip_html = f'<span class="fec-tile-chip">{_esc(chip_text)}</span>' if chip_text else ""

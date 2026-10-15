@@ -256,7 +256,7 @@ def _render_kpis(st, bundle, ctx, forecast_ok, totals, buckets, unit, profile) -
         ),
         "alerts": components.kpi_tile(
             "경고 건수", str(alerts["count"]) if not alerts["errors"] else dash,
-            sub="예측구간 이탈·요금 급증·이상 급증", icon_name="bell",
+            sub="예측구간 이탈·요금 급증·이상 급증", icon_name="anomaly", icon_tone="warn",
         ),
     }
     for col, key in zip(st.columns(5), profile["kpis"]):
@@ -404,7 +404,10 @@ def _render_period_view(st, rows, unit, start, end, metric, rate, actual_rows=No
     """헤더 단위(일/주/월)에 맞춘 예측 합계 — 시간 단위 차트와 다른 색."""
 
     label = {"pow": "전력량", "bill": "요금", "carbon": "탄소"}[metric]
-    fmt_fn = {"pow": fmt.fmt_pow, "bill": fmt.fmt_bill, "carbon": fmt.fmt_carbon}[metric]
+    # 일 합계 차이가 0.01%대라 '16.90만'처럼 반올림하면 최대·최소가 같아 보인다 → 전체 숫자
+    fmt_fn = lambda v: fmt.fmt_full(v, metric)  # noqa: E731
+    tick = charts.TICK_FORMAT[metric]
+    color = theme.COLOR["accent"]  # 시간 단위 차트와 같은 색(단위만 바뀌고 같은 예측값)
     u = config.UNIT_LABELS[metric]
     height = theme.chart_height(H_MAIN, has_caption=True) - 26
     src = actual_rows if actual_rows is not None else rows
@@ -422,7 +425,7 @@ def _render_period_view(st, rows, unit, start, end, metric, rate, actual_rows=No
     if unit == "월" or len(scaled) < 3:
         # 예측 기간(5/10–5/31)이 한 달이 안 돼 월은 1개 구간뿐 → 점+선 대신 합계 막대
         st.plotly_chart(
-            charts.period_total_bar(scaled, height=height, color=theme.metric("info"),
+            charts.period_total_bar(scaled, height=height, color=color, tickformat=tick,
                                     axis_title=f"{unit}별 예측 {label}({u})", fmt_fn=fmt_fn,
                                     show_actual=show_act),
             width="stretch", config=charts.PLOTLY_CONFIG,
@@ -434,7 +437,7 @@ def _render_period_view(st, rows, unit, start, end, metric, rate, actual_rows=No
         return
     st.plotly_chart(
         charts.period_bar_chart(
-            scaled, height=height, color=theme.metric("info"),
+            scaled, height=height, color=color, tickformat=tick,
             axis_title=f"{unit}별 예측 {label}({u})", fmt_fn=fmt_fn, show_actual=show_act,
         ),
         width="stretch", config=charts.PLOTLY_CONFIG,

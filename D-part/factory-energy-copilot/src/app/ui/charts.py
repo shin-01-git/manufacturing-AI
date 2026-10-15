@@ -122,7 +122,7 @@ def forecast_band_chart(
         go.Scatter(
             x=xs, y=pow_vals, name="예측값", mode="lines",
             line=dict(color=line_color, width=2, dash="dot" if actuals else "solid"),
-            customdata=[fmt_fn(v) for v in pow_vals],
+            customdata=[fmt.fmt_full(v, metric) for v in pow_vals],
             hovertemplate="%{x}<br>예측 %{customdata}<extra></extra>",
         )
     )
@@ -170,6 +170,7 @@ def forecast_band_chart(
     rng = page_logic.zoom_range(all_vals)  # 값 변화폭의 ±20% → 작은 차이도 보이게
     if rng:
         fig.update_yaxes(range=list(rng))
+    fig.update_yaxes(tickformat=TICK_FORMAT.get(metric, ",.2f"))
 
     fig.update_layout(
         template=_TPL,
@@ -533,8 +534,13 @@ def anomaly_vs_typical_bar(hours: list[int], counts: list[int], *, typical: floa
 # v3 charts: period bars, per-module trend, module comparison, load heatmap,
 # anomaly timeline
 # ---------------------------------------------------------------------------
+# y축 눈금: 요금은 원 단위 정수, 전력량·탄소는 소수 2자리 (169.04k 같은 SI 접두어 금지)
+TICK_FORMAT = {"bill": ",.0f", "pow": ",.2f", "carbon": ",.2f"}
+
+
 def period_bar_chart(buckets: list[dict[str, Any]], *, height: int = 220, color: str | None = None,
-                     axis_title: str = "전력량(kWh)", fmt_fn=None, show_actual: bool = False):
+                     axis_title: str = "전력량(kWh)", fmt_fn=None, show_actual: bool = False,
+                     tickformat: str = ",.2f"):
     """일/주 예측 전력량 점+선 차트 (이름은 호환을 위해 유지).
 
     일별 합계 차이가 작아 0부터 시작하는 막대는 모두 같아 보인다. 막대 y축을 자르면
@@ -571,7 +577,7 @@ def period_bar_chart(buckets: list[dict[str, Any]], *, height: int = 220, color:
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=[b["label"] for b in full], y=ys, mode="lines+markers",
-        line=dict(color=accent, width=2), marker=dict(size=7, color=accent),
+        line=dict(color=accent, width=2), marker=dict(size=5, color=accent),
         customdata=_cd(full), hovertemplate=hover, name="예측",
     ))
     if part:
@@ -603,14 +609,15 @@ def period_bar_chart(buckets: list[dict[str, Any]], *, height: int = 220, color:
     order = [b["label"] for b in sorted(full + part, key=lambda b: b["key"])]
     fig.update_layout(
         template=_TPL, height=height, showlegend=bool(act_full),
-        yaxis=dict(title=axis_title, range=[lo, hi]),
+        yaxis=dict(title=axis_title, range=[lo, hi], tickformat=tickformat),
         xaxis=dict(title="", type="category", categoryorder="array", categoryarray=order),
     )
     return fig
 
 
 def period_total_bar(buckets: list[dict[str, Any]], *, height: int = 220, color: str | None = None,
-                     axis_title: str = "전력량(kWh)", fmt_fn=None, show_actual: bool = False):
+                     axis_title: str = "전력량(kWh)", fmt_fn=None, show_actual: bool = False,
+                     tickformat: str = ",.2f"):
     """구간이 1~2개뿐일 때(월 단위 등) 합계 막대. 0부터 시작하므로 축 확대 없음."""
 
     import plotly.graph_objects as go
@@ -639,7 +646,7 @@ def period_total_bar(buckets: list[dict[str, Any]], *, height: int = 220, color:
     top = max([b["pred_pow"] for b in bs] + [b["actual_pow"] for b in act])
     fig.update_layout(
         template=_TPL, height=height, showlegend=bool(act), barmode="group",
-        yaxis=dict(title=axis_title, range=[0, top * 1.25]),
+        yaxis=dict(title=axis_title, range=[0, top * 1.25], tickformat=tickformat),
         xaxis=dict(title="", type="category"),
     )
     return fig
