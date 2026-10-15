@@ -132,9 +132,9 @@ def test_fmt_pct_ratio_and_percent():
 def test_fmt_units_come_from_config_only():
     assert fmt.unit_label("pow") == config.UNIT_LABELS["pow"]
     assert fmt.unit_footnote() == config.UNIT_FOOTNOTE
-    # Never hard-codes kWh / 원.
-    assert "kWh" not in fmt.fmt_pow(100.0, with_unit=True)
-    assert "원" not in fmt.fmt_bill(100.0, with_unit=True)
+    # 단위 라벨은 config에서만 온다 (교안 기준 kWh/원/kgCO₂, 10/15 변경).
+    assert fmt.fmt_pow(100.0, with_unit=True).endswith(config.UNIT_LABELS["pow"])
+    assert fmt.fmt_bill(100.0, with_unit=True).endswith(config.UNIT_LABELS["bill"])
 
 
 # ---- components: HTML string builders ----

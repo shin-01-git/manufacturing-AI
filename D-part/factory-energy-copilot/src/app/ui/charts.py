@@ -92,7 +92,7 @@ def forecast_band_chart(
 
     _ensure_template()
     fmt_fn = {"pow": fmt.fmt_pow, "bill": fmt.fmt_bill, "carbon": fmt.fmt_carbon}.get(metric, fmt.fmt_pow)
-    axis_title = {"pow": "전력량(척도)", "bill": "요금(척도)", "carbon": "탄소(척도)"}.get(metric, "전력량(척도)")
+    axis_title = {"pow": "전력량(kWh)", "bill": "요금(원)", "carbon": "탄소(kgCO₂)"}.get(metric, "전력량(kWh)")
     line_color = color or theme.metric("power")
     xs = [r["id"] for r in rows]
     pow_vals = [r["pred_pow"] for r in rows]
@@ -221,8 +221,8 @@ def hourly_profile_chart(hour_rows: list[dict[str, Any]], *, height: int = 320):
         template=_TPL,
         height=height,
         xaxis=dict(title="시(0~23)", dtick=2),
-        yaxis=dict(title="요금(척도)"),
-        yaxis2=dict(title="탄소(척도)", overlaying="y", side="right", showgrid=False),
+        yaxis=dict(title="요금(원)"),
+        yaxis2=dict(title="탄소(kgCO₂)", overlaying="y", side="right", showgrid=False),
     )
     return fig
 
@@ -521,11 +521,13 @@ def period_bar_chart(buckets: list[dict[str, Any]], *, height: int = 220):
 
     full = [b for b in buckets if not b["partial"] and b.get("pred_pow") is not None]
     if not full:
+        full = [b for b in buckets if b.get("pred_pow") is not None]
+    if not full:
         return _empty_fig(fmt.NO_DATA)
     _ensure_template()
     rng = page_logic.zoom_range([b["pred_pow"] for b in full])
     lo, hi = rng
-    part = [b for b in buckets if b["partial"] and b.get("pred_pow") is not None and lo <= b["pred_pow"] <= hi]
+    part = [b for b in buckets if b["partial"] and b not in full and b.get("pred_pow") is not None and lo <= b["pred_pow"] <= hi]
 
     def _cd(bs):
         return [[fmt.fmt_pow(b.get("pred_pow")), fmt.fmt_carbon(b.get("pred_carbon")), b["n"]] for b in bs]
@@ -562,7 +564,7 @@ def period_bar_chart(buckets: list[dict[str, Any]], *, height: int = 220):
     order = [b["label"] for b in sorted(full + part, key=lambda b: b["key"])]
     fig.update_layout(
         template=_TPL, height=height, showlegend=False,
-        yaxis=dict(title="전력량(척도)", range=[lo, hi]),
+        yaxis=dict(title="전력량(kWh)", range=[lo, hi]),
         xaxis=dict(title="", type="category", categoryorder="array", categoryarray=order),
     )
     return fig
@@ -592,7 +594,7 @@ def module_trend_chart(series: dict[str, tuple[list, list[float]]], *, height: i
         )
     fig.update_layout(
         template=_TPL, height=height, hovermode="x unified",
-        yaxis=dict(title="평균 시간당 전력(척도)"),
+        yaxis=dict(title="평균 시간당 전력(kWh)"),
     )
     return fig
 
@@ -606,9 +608,19 @@ def module_compare_bar(items: list[dict[str, Any]], selected: set[str], *, heigh
         return _empty_fig(fmt.NO_DATA)
     _ensure_template()
     ordered = list(reversed(items))
+    import math
+
+    peak = max(r["mean"] for r in items) or 1.0
+    # 막대가 끝까지 차지 않도록 측정 최대값보다 큰 '보기 좋은' 축 최대값(최대×1.25를 올림)
+    raw = peak * 1.25
+    step = 10 ** max(0, int(math.floor(math.log10(raw))) - 1)
+    axis_max = math.ceil(raw / step) * step
     fig = go.Figure(
         go.Bar(
             x=[r["mean"] for r in ordered],
+            text=[f"{fmt.fmt_pow(r['mean'])} · {r['share']:.1f}%" for r in ordered],
+            textposition="outside", textfont=dict(size=11),
+            cliponaxis=False,
             y=[r["module"] for r in ordered],
             orientation="h",
             marker=dict(
@@ -620,7 +632,8 @@ def module_compare_bar(items: list[dict[str, Any]], selected: set[str], *, heigh
     )
     fig.update_layout(
         template=_TPL, height=height, showlegend=False, bargap=0.4,
-        xaxis=dict(title="평균 시간당 전력(척도)", showgrid=True), yaxis=dict(showgrid=False, type="category", dtick=1),
+        xaxis=dict(title=f"평균 시간당 전력(kWh) · 축 최대 {fmt.fmt_pow(axis_max)}", showgrid=True, range=[0, axis_max]),
+        yaxis=dict(showgrid=False, type="category", dtick=1),
         margin=dict(l=110, r=16, t=8, b=34),
     )
     return fig

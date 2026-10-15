@@ -229,7 +229,7 @@ def build_briefing(
         mae_v = float(mae_block["mae504"])
         mae_s = calc.add("MAE(504)", fmt.fmt_mae(mae_v), EVAL)
         err_s = (
-            calc.add("MAE 오차율", fmt.fmt_pct(mae_v / avg_pow, decimals=2), f"{EVAL}·{PRED}")
+            calc.add("MAE 오차율", fmt.fmt_pct(mae_v / (avg_pow * config.WH_PER_KWH), decimals=2), f"{EVAL}·{PRED}")
             if f_ok and avg_pow
             else NO_DATA
         )

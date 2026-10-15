@@ -129,33 +129,37 @@ def _render_kpis(st, bundle, ctx, forecast_ok, totals, buckets, unit, profile) -
 
     tiles = {
         "pow": components.kpi_tile(
-            "예측 전력량", v(fmt.fmt_pow, totals["pow"]), sub="Σ pred_pow",
+            "예측 전력량", v(fmt.fmt_big, totals["pow"]), unit=config.UNIT_LABELS["pow"],
+            sub=fmt.fmt_full(totals["pow"], "pow") if forecast_ok else "Σ 예측(Wh) ÷ 1,000",
             icon_name="zap", tone="power",
             delta=page_logic.delta_pct(buckets, "pred_pow", unit) if forecast_ok else None,
         ),
         "bill": components.kpi_tile(
-            "예측 요금", v(fmt.fmt_bill, totals["bill"]),
-            sub=f"Σ pred_pow × {settings['bill_rate']:g}", icon_name="wallet", tone="bill",
+            "예측 요금", v(fmt.fmt_big, totals["bill"]), unit=config.UNIT_LABELS["bill"],
+            sub=(fmt.fmt_full(totals["bill"], "bill") if forecast_ok else "") + f" · kWh × {settings['bill_rate']:g}",
+            icon_name="wallet", tone="bill",
             chip_text=chip,
             delta=page_logic.delta_pct(buckets, "pred_pow", unit) if forecast_ok else None,
         ),
         "carbon": components.kpi_tile(
-            "예측 탄소", v(fmt.fmt_carbon, totals["carbon"]),
-            sub=f"Σ pred_pow × {settings['carbon_rate']:g}", icon_name="leaf", tone="carbon",
+            "예측 탄소", v(fmt.fmt_big, totals["carbon"]), unit=config.UNIT_LABELS["carbon"],
+            sub=(fmt.fmt_full(totals["carbon"], "carbon") if forecast_ok else "") + f" · kWh × {settings['carbon_rate']:g}",
+            icon_name="leaf", tone="carbon",
             chip_text=chip,
             delta=page_logic.delta_pct(buckets, "pred_carbon", unit) if forecast_ok else None,
         ),
         "cost": components.kpi_tile(
             "예상 탄소비용(가정)",
-            fmt.fmt_bill(cost) if (forecast_ok and cost is not None) else dash,
-            sub="탄소 합 ÷ 1000 × 단가" if cost is not None else "단가 설정 ›",
+            fmt.fmt_big(cost) if (forecast_ok and cost is not None) else dash,
+            unit="원" if cost is not None else "",
+            sub=(fmt.fmt_full(cost, "bill") + " · tCO₂ × 단가") if (forecast_ok and cost is not None) else "단가 설정 ›",
             icon_name="leaf", disabled=cost is None,
             chip_text="설정값 기준" if cost is not None else "",
         ),
         "mae": components.kpi_tile(
             "전력량 MAE(504)",
-            fmt.fmt_mae(mae.get("mae504")) if mae_ok else dash,
-            sub=(f"505 기준 {fmt.fmt_mae(mae.get('mae505'))} · 참고용" if mae_ok else "evaluation.json 없음"),
+            fmt.fmt_mae(mae.get("mae504")) if mae_ok else dash, unit="Wh" if mae_ok else "",
+            sub=(f"505 기준 {fmt.fmt_mae(mae.get('mae505'))} Wh · 시간당 평균 오차" if mae_ok else "evaluation.json 없음"),
             icon_name="target", tone="accuracy",
         ),
         "interval": components.kpi_tile(
@@ -239,7 +243,8 @@ def _render_chart(st, bundle, ctx, rows, profile) -> None:
         if unit != "시간":
             # Partial day/week sums are not comparable with full buckets; the bar panel
             # below still shows them (lighter), so the line chart keeps complete ones.
-            buckets = [b for b in buckets if not b["partial"]]
+            complete = [b for b in buckets if not b["partial"]]
+            buckets = complete or buckets  # 월 단위는 5월 한 구간(부분)뿐이라 그대로 표시
         if not buckets:
             st.markdown(components.empty_state("선택 기간에 완전한 구간 없음"), unsafe_allow_html=True)
             return
@@ -311,6 +316,9 @@ def _render_alert_panel(st, alerts: dict[str, Any]) -> None:
 
 def _render_period_panel(st, rows, unit, start, end, forecast_ok) -> None:
     shown_unit = unit if unit != "시간" else "일"
+    # 예측 기간이 5/10~5/31이라 월 단위는 1개 구간(부분)뿐 → 이 패널은 일 단위로 보여 준다
+    if shown_unit == "월":
+        shown_unit = "일"
     with components.panel(height=H_BOTTOM, key=PANEL_PERIOD):
         st.markdown(
             components.panel_header("일/주 단위 예측 전력량", icon_name="chart", desc=f"{shown_unit} 단위"),

@@ -83,6 +83,32 @@ def fmt_carbon(value: Any, *, with_unit: bool = False) -> str:
     return _with_unit(text, "carbon") if with_unit else text
 
 
+def fmt_big(value: Any) -> str:
+    """KPI 큰 숫자: 소수점 없이. 100만 미만은 정수(19,759), 1억 미만은 만 단위(356만),
+    그 이상은 억+만(3억 5,567만). 정확한 값은 fmt_full로 아래 작은 글씨에 표시한다."""
+
+    if not _is_number(value):
+        return NO_DATA
+    v = float(value)
+    sign = "-" if v < 0 else ""
+    mag = abs(v)
+    if mag < 1_000_000:
+        return f"{sign}{round(mag):,d}"
+    if mag < _EOK:
+        return f"{sign}{round(mag / _MAN):,d}만"
+    eok = int(mag // _EOK)
+    man = round((mag % _EOK) / _MAN)
+    return f"{sign}{eok:,d}억 {man:,d}만" if man else f"{sign}{eok:,d}억"
+
+
+def fmt_full(value: Any, unit_key: str | None = None) -> str:
+    """정확한 전체 숫자(소수 2자리) + 단위: 3,556,690.52 원."""
+
+    if not _is_number(value):
+        return NO_DATA
+    return _with_unit(f"{float(value):,.2f}", unit_key)
+
+
 def fmt_mae(value: Any) -> str:
     """Format a MAE value with one decimal (88.18 -> 88.2); shared by every surface."""
 

@@ -19,7 +19,8 @@ PANEL_QUALITY = "eq_quality"
 
 H_MAIN = 320
 H_LOW = 270
-MAX_SELECT = 5
+MAX_SELECT = 5  # 이보다 많이 고르면 추이 차트는 합계 한 줄로 표시
+ALL_LABEL = "전체"
 HOURLY_NAME = "hourly_from_full.parquet"
 QUALITY_NAME = "module_quality_hourly.parquet"
 
@@ -46,13 +47,14 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> None:
 
     all_modules = sorted(frame["module"].unique())
     default = [m for m in page_logic.top_modules(frame, 3) if m in all_modules]
-    selected = st.multiselect(
-        "설비 선택 (최대 5개)",
-        options=all_modules,
+    picked = st.multiselect(
+        "설비 선택 (전체 또는 개별)",
+        options=[ALL_LABEL] + all_modules,
         default=default,
-        max_selections=MAX_SELECT,
         key="eq_modules",
     )
+    all_mode = ALL_LABEL in picked
+    selected = list(all_modules) if all_mode else picked
     if not selected:
         st.markdown(components.empty_state("선택한 설비 없음"), unsafe_allow_html=True)
         return
@@ -61,7 +63,7 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> None:
 
     left, right = st.columns([1.45, 1])
     with left:
-        _render_trend(st, frame, selected, unit, start, end)
+        _render_trend(st, frame, selected, unit, start, end, total=all_mode or len(selected) > MAX_SELECT)
     with right:
         _render_compare(st, means, set(selected))
 
@@ -86,7 +88,7 @@ def _render_kpis(st, frame, means, selected, start, end, bundle) -> None:
         if pf_vals:
             pf_text, pf_sub = f"{sum(pf_vals) / len(pf_vals):.1f}%", "(PF_R+PF_S+PF_T)/3"
     tiles = [
-        components.kpi_tile("선택 설비 평균 전력", fmt.fmt_pow(avg), sub="평균 시간당 전력(척도)", compact=True),
+        components.kpi_tile("선택 설비 평균 전력", fmt.fmt_pow(avg), unit="kWh", sub="설비당 평균 시간당 전력", compact=True),
         components.kpi_tile(
             "최대 부하 시간대", f"{peak:02d}시" if peak is not None else "—",
             sub="선택 설비 평균 기준", compact=True,
@@ -101,13 +103,21 @@ def _render_kpis(st, frame, means, selected, start, end, bundle) -> None:
         col.markdown(tile, unsafe_allow_html=True)
 
 
-def _render_trend(st, frame, selected, unit, start, end) -> None:
+def _render_trend(st, frame, selected, unit, start, end, total: bool = False) -> None:
     with components.panel(height=H_MAIN, key=PANEL_TREND):
         st.markdown(
             components.panel_header("전력 소비 추이", icon_name="forecast", desc=f"{unit} 단위 평균"),
             unsafe_allow_html=True,
         )
         series = page_logic.module_trend(frame, selected, unit, start, end)
+        if total and series:
+            # 선이 너무 많아지는 경우(전체·6개 이상) 선택 설비 합계 한 줄로 표시
+            acc: dict = {}
+            for xs, ys in series.values():
+                for x, y in zip(xs, ys):
+                    acc[x] = acc.get(x, 0.0) + y
+            keys = sorted(acc)
+            series = {f"선택 {len(selected)}개 합계": (keys, [acc[k] for k in keys])}
         st.plotly_chart(
             charts.module_trend_chart(series, height=theme.chart_height(H_MAIN)),
             width="stretch", config=charts.PLOTLY_CONFIG,

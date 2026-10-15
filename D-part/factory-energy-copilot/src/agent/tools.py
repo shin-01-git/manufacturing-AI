@@ -183,16 +183,17 @@ def get_forecast_summary(
             continue
         if end_dt is not None and naive > _as_naive(end_dt):
             continue
+        k = config.WH_PER_KWH  # Wh 척도 artifact → kWh/원/kg (교안 단위)
         row = {
             "id": raw["id"],
-            "pred_pow": float(raw["pred_pow"]),
-            "pred_bill": float(raw["pred_bill"]),
-            "pred_carbon": float(raw["pred_carbon"]),
+            "pred_pow": float(raw["pred_pow"]) / k,
+            "pred_bill": float(raw["pred_bill"]) / k,
+            "pred_carbon": float(raw["pred_carbon"]) / k,
         }
         if "pred_low" in raw and raw["pred_low"] != "":
-            row["pred_low"] = float(raw["pred_low"])
+            row["pred_low"] = float(raw["pred_low"]) / k
         if "pred_high" in raw and raw["pred_high"] != "":
-            row["pred_high"] = float(raw["pred_high"])
+            row["pred_high"] = float(raw["pred_high"]) / k
         rows.append(row)
 
     count = len(rows)

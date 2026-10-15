@@ -36,7 +36,7 @@ PAGE_ICONS: dict[str, str] = {
 # Pages that expose the 시간/일/주 toggle and a date filter in the header bar.
 PAGES_WITH_GRANULARITY = {PAGE_HOME, PAGE_EQUIPMENT}
 PAGES_WITH_DATE = {PAGE_HOME, PAGE_EQUIPMENT, PAGE_ANOMALY, PAGE_COPILOT}
-GRANULARITIES: list[str] = ["시간", "일", "주"]
+GRANULARITIES: list[str] = ["시간", "일", "주", "월"]
 DEFAULT_GRANULARITY = "일"
 
 SETTINGS_KEY = "settings"
@@ -184,10 +184,18 @@ def bucket_key(moment: datetime, unit: str) -> tuple[str, str]:
     if unit == "주":
         monday = moment.date() - timedelta(days=moment.weekday())
         return monday.isoformat(), monday.strftime("%m-%d") + " 주"
+    if unit == "월":
+        first = moment.date().replace(day=1)
+        return first.isoformat(), first.strftime("%Y-%m")
     return moment.strftime("%Y-%m-%d %H:00"), moment.strftime("%m-%d %H시")
 
 
-def _full_size(unit: str) -> int:
+def _full_size(unit: str, key: str | None = None) -> int:
+    if unit == "월" and key:
+        import calendar
+
+        y, m = int(key[:4]), int(key[5:7])
+        return calendar.monthrange(y, m)[1] * 24
     return {"시간": 1, "일": 24, "주": 168}.get(unit, 1)
 
 
@@ -221,9 +229,8 @@ def resample_rows(
                 continue
             b[f] = (b[f] or 0.0) + float(v)
     out = [buckets[k] for k in sorted(buckets)]
-    full = _full_size(unit)
     for b in out:
-        b["partial"] = unit != "시간" and b["n"] < full
+        b["partial"] = unit != "시간" and b["n"] < _full_size(unit, b["key"])
         if b["partial"]:
             b["label"] = f"{b['label']}(부분)"
     return out
@@ -456,6 +463,8 @@ def module_trend(frame, modules: list[str], unit: str, start: Any = None, end: A
         key = sub["hour"].dt.floor("D")
     elif unit == "주":
         key = (sub["hour"].dt.floor("D") - pd.to_timedelta(sub["hour"].dt.weekday, unit="D"))
+    elif unit == "월":
+        key = sub["hour"].dt.to_period("M").dt.start_time
     else:
         key = sub["hour"]
     g = sub.assign(_k=key).groupby(["module", "_k"])["hourly_pow"].mean().reset_index()

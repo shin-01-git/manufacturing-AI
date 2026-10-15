@@ -39,3 +39,17 @@ def test_forecast_basis_missing_keys():
     assert all(v is None for v in out.values())
     out2 = page_logic.forecast_basis({"selection": {"selected_model": "calendar_linear_regression"}})
     assert out2["model"] == "달력 특성 선형회귀"
+
+
+def test_fmt_big_no_decimals():
+    from src.app.ui import fmt
+    assert fmt.fmt_big(19758.65) == "19,759"
+    assert fmt.fmt_big(3556690.52) == "356만"
+    assert fmt.fmt_big(355669052.0) == "3억 5,567만"
+    assert fmt.fmt_full(3556690.523, "bill").startswith("3,556,690.52")
+
+
+def test_month_granularity_partial():
+    rows = [{"id": f"2025-05-{d:02d} {h:02d}:00:00", "pred_pow": 1.0} for d in range(10, 32) for h in range(24)]
+    b = page_logic.resample_rows(rows, "월", ("pred_pow",))
+    assert len(b) == 1 and b[0]["label"].startswith("2025-05") and b[0]["partial"]

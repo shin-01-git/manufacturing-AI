@@ -106,11 +106,15 @@ PROJECT_TAGLINE: str = "공장 전력량 예측·요금/탄소 환산·이상 �
 # activePower 단위가 [미확인]이므로 "kWh/원"으로 단정하지 않는다. 요금·탄소는
 # 정답 파일과 동일 척도(NFR-8). 팀이 단위를 확정하면 이 한 곳만 바꾼다.
 UNIT_LABELS: dict[str, str] = {
-    "pow": "전력량(데이터 척도)",
-    "bill": "요금(정답 척도, ×180)",
-    "carbon": "탄소(정답 척도, ×0.424)",
+    "pow": "kWh",
+    "bill": "원",
+    "carbon": "kgCO₂",
 }
-UNIT_FOOTNOTE: str = "ⓘ 원본 activePower 단위 미확인 — 정답 파일과 동일 척도로 환산"
+# 교안(session-12 '단위와 표기'): 데이터 전력량은 Wh → 1,000으로 나눠 kWh로 바꾼 뒤
+# 요금(180원/kWh)·탄소(0.424kgCO₂/kWh)를 계산한다. artifacts는 Wh 척도 그대로 두고
+# 화면·에이전트로 나가는 값만 이 계수로 환산한다(artifacts 불변, 평가 MAE는 Wh 유지).
+WH_PER_KWH: float = 1000.0
+UNIT_FOOTNOTE: str = "ⓘ 데이터 전력량(Wh) ÷ 1,000 = kWh · 요금 = kWh × 180원 · 탄소 = kWh × 0.424kgCO₂"
 
 # O-3 상태 경계값 미승인. True가 되기 전에는 status를 '미확정' 회색 칩으로만 표시.
 STATUS_THRESHOLDS_APPROVED: bool = False

@@ -19,6 +19,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from config import config
 from src.agent import tools as tools_mod
 from src.app import ui_logic
 
@@ -76,10 +77,10 @@ def _load_actual_vs_pred(artifacts_dir: Path | None) -> dict[str, Any]:
                 rows.append(
                     {
                         "id": r["id"],
-                        "actual_pow": float(r["actual_pow"]),
-                        "pred_pow": float(r["pred_pow"]),
-                        "pred_low": float(r["pred_low"]) if r.get("pred_low") else None,
-                        "pred_high": float(r["pred_high"]) if r.get("pred_high") else None,
+                        "actual_pow": float(r["actual_pow"]) / config.WH_PER_KWH,
+                        "pred_pow": float(r["pred_pow"]) / config.WH_PER_KWH,
+                        "pred_low": float(r["pred_low"]) / config.WH_PER_KWH if r.get("pred_low") else None,
+                        "pred_high": float(r["pred_high"]) / config.WH_PER_KWH if r.get("pred_high") else None,
                     }
                 )
     except (OSError, KeyError, ValueError):
@@ -135,6 +136,9 @@ def load_bundle(artifacts_dir: Path | None = None) -> dict[str, Any]:
     bundle["rebuild_meta"] = _load_rebuild_meta(artifacts_dir)
     bundle["actual_vs_pred"] = _load_actual_vs_pred(artifacts_dir)
     bundle["modules_hourly"] = _load_parquet_frame(HOURLY_MODULES_NAME, artifacts_dir)
+    mh = bundle["modules_hourly"]
+    if "frame" in mh and "hourly_pow" in mh["frame"].columns:  # Wh → kWh (교안 단위)
+        mh["frame"] = mh["frame"].assign(hourly_pow=mh["frame"]["hourly_pow"] / config.WH_PER_KWH)
     bundle["quality"] = _load_parquet_frame(QUALITY_NAME, artifacts_dir)
     bundle["selection"] = _load_json(SELECTION_NAME, artifacts_dir)
     bundle["source_meta"] = _load_json("source_meta.json", artifacts_dir)
