@@ -107,7 +107,8 @@ def _period_for_page(page: str, bundle: dict) -> dict:
     """Actual data period of the page (no hard-coding, §A-7 R1)."""
 
     if page == page_logic.PAGE_ANOMALY:
-        return ui_logic.events_period(bundle["events"])
+        # 로드 시 한 번 계산한 값 사용 (매 rerun 6.5만 건 순회 방지)
+        return bundle.get("events_period") or ui_logic.events_period(bundle["events"])
     if page == page_logic.PAGE_EQUIPMENT:
         frame = bundle.get("modules_hourly", {}).get("frame")
         lo, hi = page_logic.frame_period(frame)

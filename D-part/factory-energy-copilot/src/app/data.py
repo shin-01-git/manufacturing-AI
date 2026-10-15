@@ -14,6 +14,7 @@ Missing artifacts never raise: each loader returns an ``error`` dict (tools) or
 
 from __future__ import annotations
 
+import functools
 import json
 from pathlib import Path
 from typing import Any
@@ -138,21 +139,61 @@ def load_bundle(artifacts_dir: Path | None = None) -> dict[str, Any]:
     bundle["selection"] = _load_json(SELECTION_NAME, artifacts_dir)
     bundle["source_meta"] = _load_json("source_meta.json", artifacts_dir)
     bundle["aggregate_run"] = _load_json("aggregate_run.json", artifacts_dir)
+    # 6.5만 건 이벤트를 매 rerun마다 훑지 않도록 기간은 로드 시 한 번만 계산한다.
+    bundle["events_period"] = ui_logic.events_period(bundle["events"])
     return bundle
 
 
-def cached_bundle(artifacts_dir: Path | None = None) -> dict[str, Any]:
-    """Streamlit-cached bundle loader (@st.cache_data, A-6). Falls back to a plain
-    call when Streamlit's cache is unavailable (e.g. unit tests)."""
+_SIGNATURE_FILES = (
+    "predictions.csv", "evaluation.json", "module_status.csv", "anomaly_events.parquet",
+    "anomaly_hourly.parquet", ACTUAL_VS_PRED_NAME, HOURLY_MODULES_NAME, REBUILD_META_NAME,
+    SELECTION_NAME,
+)
 
-    try:
-        import streamlit as st
-    except ModuleNotFoundError:  # pragma: no cover - streamlit always present in app
-        return load_bundle(artifacts_dir)
 
-    @st.cache_data(show_spinner=False)
-    def _cached(dir_str: str | None) -> dict[str, Any]:
+def _artifacts_signature(artifacts_dir: Path | None) -> tuple:
+    """(파일명, 수정시각, 크기) 묶음. artifacts가 다시 생성되면 값이 바뀌어 캐시가 갱신된다."""
+
+    sig = []
+    for name in _SIGNATURE_FILES:
+        try:
+            p = tools_mod.resolve_artifact_path(name, artifacts_dir=artifacts_dir)
+            st_ = p.stat()
+            sig.append((name, st_.st_mtime_ns, st_.st_size))
+        except Exception:  # noqa: BLE001 - 없거나 막힌 파일은 '없음'으로 서명
+            sig.append((name, None, None))
+    return tuple(sig)
+
+
+@functools.lru_cache(maxsize=1)
+def _cached_loader():
+    """모듈 수준에서 한 번만 만드는 캐시 함수.
+
+    cache_data → cache_resource 로 변경한 이유: cache_data는 rerun마다 결과를 pickle로
+    복사해 돌려준다. 번들에는 이상 이벤트 6.5만 건(dict 목록)과 parquet DataFrame이 들어
+    있어 클릭할 때마다 이 복사(수백 ms)가 반복된다. cache_resource는 같은 객체를 그대로
+    돌려주므로 복사 비용이 없다. **대신 호출부는 번들을 수정하면 안 된다(읽기 전용).**
+    """
+
+    import streamlit as st
+
+    @st.cache_resource(show_spinner="artifacts 불러오는 중…", max_entries=2)
+    def _cached(dir_str: str | None, signature: tuple) -> dict[str, Any]:  # noqa: ARG001
         root = Path(dir_str) if dir_str else None
         return load_bundle(root)
 
-    return _cached(str(artifacts_dir) if artifacts_dir else None)
+    return _cached
+
+
+def cached_bundle(artifacts_dir: Path | None = None) -> dict[str, Any]:
+    """Streamlit-cached bundle loader (A-6). Falls back to a plain call when
+    Streamlit is unavailable (e.g. unit tests). Read-only: never mutate the result."""
+
+    try:
+        import streamlit  # noqa: F401
+    except ModuleNotFoundError:  # pragma: no cover - streamlit always present in app
+        return load_bundle(artifacts_dir)
+
+    return _cached_loader()(
+        str(artifacts_dir) if artifacts_dir else None, _artifacts_signature(artifacts_dir)
+    )
