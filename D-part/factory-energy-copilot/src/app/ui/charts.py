@@ -121,7 +121,7 @@ def forecast_band_chart(
     fig.add_trace(
         go.Scatter(
             x=xs, y=pow_vals, name="예측값", mode="lines",
-            line=dict(color=line_color, width=2, dash="dot"),
+            line=dict(color=line_color, width=2, dash="dot" if actuals else "solid"),
             customdata=[fmt_fn(v) for v in pow_vals],
             hovertemplate="%{x}<br>예측 %{customdata}<extra></extra>",
         )
@@ -508,35 +508,62 @@ def anomaly_vs_typical_bar(hours: list[int], counts: list[int], *, typical: floa
 # anomaly timeline
 # ---------------------------------------------------------------------------
 def period_bar_chart(buckets: list[dict[str, Any]], *, height: int = 220):
-    """Bars = predicted power per day/week bucket; partial buckets use a lighter fill.
+    """일/주 예측 전력량 점+선 차트 (이름은 호환을 위해 유지).
 
-    Carbon is shown in the hover (no secondary axis). ``buckets`` come from
-    ``page_logic.resample_rows`` with fields pred_pow / pred_carbon.
+    일별 합계 차이가 작아 0부터 시작하는 막대는 모두 같아 보인다. 막대 y축을 자르면
+    왜곡이므로 점+선으로 바꾸고 완전 구간 값만으로 y축을 확대한다. 부분 구간은
+    범위 밖이면 그리지 않는다. 최대·최소 라벨과 평균선을 표시한다.
     """
 
     import plotly.graph_objects as go
 
-    if not buckets:
+    from src.app import page_logic
+
+    full = [b for b in buckets if not b["partial"] and b.get("pred_pow") is not None]
+    if not full:
         return _empty_fig(fmt.NO_DATA)
     _ensure_template()
-    fig = go.Figure(
-        go.Bar(
-            x=[b["label"] for b in buckets],
-            y=[b.get("pred_pow") or 0.0 for b in buckets],
-            marker=dict(
-                color=[theme.token("partial") if b["partial"] else theme.COLOR["accent"] for b in buckets]
-            ),
-            width=0.6,
-            customdata=[
-                [fmt.fmt_pow(b.get("pred_pow")), fmt.fmt_carbon(b.get("pred_carbon")), b["n"]]
-                for b in buckets
-            ],
-            hovertemplate="%{x}<br>전력량 %{customdata[0]}<br>탄소 %{customdata[1]}<br>%{customdata[2]}시간<extra></extra>",
-        )
+    rng = page_logic.zoom_range([b["pred_pow"] for b in full])
+    lo, hi = rng
+    part = [b for b in buckets if b["partial"] and b.get("pred_pow") is not None and lo <= b["pred_pow"] <= hi]
+
+    def _cd(bs):
+        return [[fmt.fmt_pow(b.get("pred_pow")), fmt.fmt_carbon(b.get("pred_carbon")), b["n"]] for b in bs]
+
+    hover = "%{x}<br>전력량 %{customdata[0]}<br>탄소 %{customdata[1]}<br>%{customdata[2]}시간<extra></extra>"
+    accent = theme.COLOR["accent"]
+    ys = [b["pred_pow"] for b in full]
+    mean = sum(ys) / len(ys)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=[b["label"] for b in full], y=ys, mode="lines+markers",
+        line=dict(color=accent, width=2), marker=dict(size=7, color=accent),
+        customdata=_cd(full), hovertemplate=hover, name="예측",
+    ))
+    if part:
+        fig.add_trace(go.Scatter(
+            x=[b["label"] for b in part], y=[b["pred_pow"] for b in part], mode="markers",
+            marker=dict(size=8, color="rgba(0,0,0,0)", line=dict(color=theme.token("partial"), width=2)),
+            customdata=_cd(part), hovertemplate=hover, name="부분 구간",
+        ))
+    fig.add_hline(
+        y=mean, line=dict(color=theme.COLOR["muted"], width=1, dash="dot"),
+        annotation_text=f"평균 {fmt.fmt_pow(mean)}", annotation_position="top left",
+        annotation_font=dict(size=11, color=theme.COLOR["muted"]),
     )
+    imax = max(range(len(full)), key=lambda k: ys[k])
+    imin = min(range(len(full)), key=lambda k: ys[k])
+    for k, pos in ((imax, "top center"), (imin, "bottom center")):
+        fig.add_trace(go.Scatter(
+            x=[full[k]["label"]], y=[ys[k]], mode="text", text=[fmt.fmt_pow(ys[k])],
+            textposition=pos, textfont=dict(size=11, color=theme.COLOR["text"]),
+            hoverinfo="skip", showlegend=False,
+        ))
+    order = [b["label"] for b in sorted(full + part, key=lambda b: b["key"])]
     fig.update_layout(
-        template=_TPL, height=height, showlegend=False, bargap=0.35,
-        yaxis=dict(title="전력량(척도)"), xaxis=dict(title="", type="category"),
+        template=_TPL, height=height, showlegend=False,
+        yaxis=dict(title="전력량(척도)", range=[lo, hi]),
+        xaxis=dict(title="", type="category", categoryorder="array", categoryarray=order),
     )
     return fig
 

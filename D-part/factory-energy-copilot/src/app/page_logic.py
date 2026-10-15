@@ -860,3 +860,50 @@ def flow_steps(bundle: dict[str, Any]) -> list[dict[str, str]]:
             "caption": "MAE(505) · 시점 수 " + (str(ev.get("row_count")) if ok(ev) else dash),
         },
     ]
+
+
+# ---------------------------------------------------------------------------
+# 홈 차트 보조 (팀장 피드백: 예측 설명 문장 · 예측 전력량 y축 확대)
+# ---------------------------------------------------------------------------
+MODEL_LABELS: dict[str, str] = {
+    "calendar_linear_regression": "달력 특성 선형회귀",
+    "random_forest": "랜덤 포레스트",
+}
+
+
+def zoom_range(values: list[float], pad: float = 0.2) -> tuple[float, float] | None:
+    """[min - pad*span, max + pad*span]. 값이 없으면 None, 값이 1개이거나 모두 같으면 ±5%."""
+
+    vals = [float(v) for v in values if v is not None]
+    if not vals:
+        return None
+    lo, hi = min(vals), max(vals)
+    span = hi - lo
+    if span <= 0:
+        margin = abs(hi) * 0.05 or 1.0
+        return lo - margin, hi + margin
+    return lo - pad * span, hi + pad * span
+
+
+def forecast_basis(bundle: dict[str, Any]) -> dict[str, Any]:
+    """설명 문장에 들어갈 값. artifacts에 없으면 해당 키는 None."""
+
+    out: dict[str, Any] = {
+        "model": None, "train_start": None, "train_end": None,
+        "pred_start": None, "pred_end": None, "points": None,
+    }
+    sel = bundle.get("selection") or {}
+    if isinstance(sel, dict) and "error" not in sel and sel.get("selected_model"):
+        raw = str(sel["selected_model"])
+        out["model"] = MODEL_LABELS.get(raw, raw)
+    frame = (bundle.get("modules_hourly") or {}).get("frame")
+    if frame is not None:
+        lo, hi = frame_period(frame)
+        out["train_start"] = lo.isoformat() if lo else None
+        out["train_end"] = hi.isoformat() if hi else None
+    fc = bundle.get("forecast") or {}
+    if isinstance(fc, dict) and "error" not in fc and fc.get("count"):
+        out["pred_start"] = str(fc.get("start"))[:16] if fc.get("start") else None
+        out["pred_end"] = str(fc.get("end"))[:16] if fc.get("end") else None
+        out["points"] = int(fc["count"])
+    return out

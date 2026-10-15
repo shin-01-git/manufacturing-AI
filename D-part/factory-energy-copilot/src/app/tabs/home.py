@@ -200,15 +200,27 @@ def _render_chart(st, bundle, ctx, rows, profile) -> None:
         with head_l:
             st.markdown(
                 components.panel_header(
-                    "시간대별 예측 vs 실제", icon_name="forecast", desc="예측구간 P5–P95 (잠정)"
+                    "시간대별 예측", icon_name="forecast", desc="예측구간 P5–P95 (잠정)"
                 ),
                 unsafe_allow_html=True,
             )
         with head_r:
-            metric_label = st.segmented_control(
-                "지표", options=METRIC_OPTIONS, default=profile["metric"], key=f"home_metric_{ctx['role']}",
-                label_visibility="collapsed",
-            )
+            c_metric, c_actual, c_info = st.columns([5, 4, 1], vertical_alignment="center")
+            with c_metric:
+                metric_label = st.segmented_control(
+                    "지표", options=METRIC_OPTIONS, default=profile["metric"], key=f"home_metric_{ctx['role']}",
+                    label_visibility="collapsed",
+                )
+            with c_actual:
+                show_actual = st.toggle("실제값 비교(검증)", value=False, key="home_show_actual")
+            with c_info:
+                with st.popover(":material/info:"):
+                    st.markdown(
+                        "- 예측구간 P5–P95는 검증 구간 잔차 분위수 기반(잠정)\n"
+                        "- 5월 정답은 모델 선택에 사용하지 않음\n"
+                        "- 실제값 비교는 검증 모드 전용(실제 운영에서는 미래 실제값이 없음)"
+                    )
+        st.caption(_basis_sentence(bundle, settings))
         metric = _METRIC_KEY.get(metric_label or "요금", "bill")
         if not rows:
             st.markdown(
@@ -242,17 +254,28 @@ def _render_chart(st, bundle, ctx, rows, profile) -> None:
         ]
         actuals = (
             {b["key"]: b["actual_pow"] * rate for b in buckets if b["actual_pow"] is not None}
-            if "error" not in avp else None
+            if show_actual and "error" not in avp else None
         )
         fig = charts.forecast_band_chart(
-            chart_rows, actuals=actuals, height=theme.chart_height(H_MAIN, has_caption=True),
+            chart_rows, actuals=actuals, height=theme.chart_height(H_MAIN, has_caption=True) - 26,
             metric=metric, color=theme.COLOR["accent"],
         )
         st.plotly_chart(fig, width="stretch", config=charts.PLOTLY_CONFIG)
         note = "y축 0에서 시작하지 않음 · 예측구간은 임시/잠정값" + ("" if unit == "시간" else " · 부분 구간 제외")
-        if "error" in avp:
+        if show_actual and "error" in avp:
             note = "실제값 artifact(actual_vs_pred.csv)를 불러오지 못해 예측만 표시합니다."
         st.caption(note)
+
+
+def _basis_sentence(bundle: dict[str, Any], settings: dict[str, Any]) -> str:
+    b = page_logic.forecast_basis(bundle)
+    d = lambda v: v if v else "—"  # noqa: E731
+    return (
+        f"학습 {d(b['train_start'])}~{d(b['train_end'])} 시간별 전력량으로 학습한 {d(b['model'])} 모델이 "
+        f"요일·시간대 특성만으로 {d(b['pred_start'])}~{d(b['pred_end'])} 1시간 단위 "
+        f"{d(b['points'])}개 시점을 예측 · 요금=전력량×{settings['bill_rate']:g}, "
+        f"탄소=전력량×{settings['carbon_rate']:g}"
+    )
 
 
 def _merge_rows(rows: list[dict[str, Any]], avp: dict[str, Any]) -> list[dict[str, Any]]:
@@ -305,7 +328,12 @@ def _render_period_panel(st, rows, unit, start, end, forecast_ok) -> None:
             charts.period_bar_chart(buckets, height=theme.chart_height(H_BOTTOM, has_caption=True)),
             width="stretch", config=charts.PLOTLY_CONFIG,
         )
-        st.caption("연한 막대 = 부분 구간 (5/10 토요일 시작)")
+        full = [b["pred_pow"] for b in buckets if not b["partial"] and b.get("pred_pow") is not None]
+        if full:
+            mean = sum(full) / len(full)
+            spread = max(full) - min(full)
+            pct = spread / mean * 100 if mean else 0.0
+            st.caption(f"y축 0 시작 아님 · {shown_unit}별 차이 {fmt.fmt_pow(spread)}({pct:.2f}%) · 빈 원 = 부분 구간")
 
 
 def _render_cost_panel(st, totals, settings, forecast_ok) -> None:
