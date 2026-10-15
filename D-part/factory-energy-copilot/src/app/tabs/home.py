@@ -56,18 +56,30 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> None:
     rows = forecast.get("rows", []) if forecast_ok else []
     start, end = ctx["start"], ctx["end"]
     unit = ctx["gran"]
-    totals = page_logic.scaled_totals(rows, settings, start=start, end=end)
+    # 예측 그래프에서 고른 날짜/주가 KPI 기간이 된다(시간·월은 헤더 기간 전체).
+    options, picked = _picked_period(st, rows, unit, start, end)
+    k_start, k_end = page_logic.period_bounds(unit, picked["key"]) if picked else (start, end)
+    totals = page_logic.scaled_totals(rows, settings, start=k_start, end=k_end)
     buckets = page_logic.resample_rows(
         rows, unit, ("pred_pow", "pred_carbon"), start=start, end=end
     )
-    # pred_carbon/pred_bill in predictions.csv use default rates; deltas are
-    # relative, so the rate does not change them.
+    kpi = {
+        "label": picked["label"] if picked else "선택 기간 전체",
+        "alerts": page_logic.build_alerts(
+            bundle["actual_vs_pred"], bundle["forecast"], bundle["trend"], settings,
+            start=k_start, end=k_end,
+        ),
+        "delta": _prev_period_delta(rows, unit, options, picked, settings) if picked else None,
+        "anomaly_exp": page_logic.anomaly_expected(
+            (bundle.get("anomaly_hourly_frame") or {}).get("frame"), rows, start=k_start, end=k_end,
+        ),
+    }
     profile = page_logic.role_profile(ctx.get("role", config.DEFAULT_ROLE))
-    _render_kpis(st, bundle, ctx, forecast_ok, totals, buckets, unit, profile)
+    _render_kpis(st, bundle, ctx, forecast_ok, totals, buckets, unit, profile, kpi)
 
     chart_col, alert_col = st.columns([2.35, 1])
     with chart_col:
-        _render_chart(st, bundle, ctx, rows, profile)
+        _render_chart(st, bundle, ctx, rows, profile, options, picked)
     with alert_col:
         _render_alert_panel(st, alerts)
 
@@ -184,9 +196,42 @@ def _render_strip(st, alerts: dict[str, Any]) -> None:
         st.markdown(html, unsafe_allow_html=True)
 
 
-def _render_kpis(st, bundle, ctx, forecast_ok, totals, buckets, unit, profile) -> None:
+def _picked_period(st, rows, unit, start, end):
+    """날짜(일)/주 선택지와 현재 선택. 위젯은 예측 패널에 있지만 KPI가 먼저 그려지므로
+    session_state 값으로 미리 결정한다(첫 실행이면 첫 완전 구간)."""
+
+    options = page_logic.period_options(rows, unit, start=start, end=end)
+    if not options:
+        return options, None
+    labels = [o["label"] for o in options]
+    cur = st.session_state.get(f"home_pick_{unit}")
+    if cur in labels:
+        return options, options[labels.index(cur)]
+    return options, options[next((i for i, o in enumerate(options) if not o["partial"]), 0)]
+
+
+def _prev_period_delta(rows, unit, options, picked, settings) -> float | None:
+    """선택 날짜/주 vs 직전 날짜/주 예측 전력량 변화율(%). 둘 다 완전 구간일 때만."""
+
+    i = options.index(picked)
+    if i == 0 or picked["partial"] or options[i - 1]["partial"]:
+        return None
+    cb = page_logic.period_bounds(unit, picked["key"])
+    pb = page_logic.period_bounds(unit, options[i - 1]["key"])
+    cur = page_logic.scaled_totals(rows, settings, start=cb[0], end=cb[1])["pow"]
+    prev = page_logic.scaled_totals(rows, settings, start=pb[0], end=pb[1])["pow"]
+    return (cur - prev) / prev * 100 if prev else None
+
+
+def _render_kpis(st, bundle, ctx, forecast_ok, totals, buckets, unit, profile, kpi=None) -> None:
     settings = ctx["settings"]
-    alerts = ctx["alerts"]
+    kpi = kpi or {"label": "선택 기간 전체", "alerts": ctx["alerts"], "delta": None, "anomaly_exp": None}
+    alerts = kpi["alerts"]
+    picked_mode = kpi["label"] != "선택 기간 전체"
+    pow_delta = kpi["delta"] if picked_mode else (
+        page_logic.delta_pct(buckets, "pred_pow", unit) if forecast_ok else None)
+    exp = kpi["anomaly_exp"]
+    hist = (f"{exp['hist_start']:%m/%d}–{exp['hist_end']:%m/%d}" if exp else "과거")
     evaluation = bundle["evaluation"]
     differs = page_logic.rates_differ_from_default(settings)
     chip = "설정값 기준" if differs else ""
@@ -207,9 +252,9 @@ def _render_kpis(st, bundle, ctx, forecast_ok, totals, buckets, unit, profile) -
     tiles = {
         "pow": components.kpi_tile(
             "예측 전력량", v(fmt.fmt_big, totals["pow"]), unit=config.UNIT_LABELS["pow"],
-            sub=fmt.fmt_full(totals["pow"], "pow") if forecast_ok else "Σ 예측(Wh) ÷ 1,000",
+            sub=(f"{kpi['label']} · {fmt.fmt_full(totals['pow'], 'pow')}") if forecast_ok else "Σ 예측(Wh) ÷ 1,000",
             icon_name="zap", tone="power",
-            delta=page_logic.delta_pct(buckets, "pred_pow", unit) if forecast_ok else None,
+            delta=pow_delta if forecast_ok else None,
         ),
         "bill": components.kpi_tile(
             "예측 요금", v(lambda x: fmt.fmt_big_split(x)[0], totals["bill"]),
@@ -243,20 +288,24 @@ def _render_kpis(st, bundle, ctx, forecast_ok, totals, buckets, unit, profile) -
         "interval": components.kpi_tile(
             "예측구간 이탈",
             f"{alerts['interval_count']}시간" if not alerts["errors"] else dash,
-            sub="실제값이 P5–P95 밖인 시간 (잠정)", icon_name="alert_sq",
+            sub=f"{kpi['label']} · 실제값이 P5–P95 밖 (잠정)", icon_name="alert_sq",
         ),
         "events": components.kpi_tile(
+            "예상 이상 행수", f"≈{fmt.fmt_count(round(exp['expected']))}",
+            sub=f"5월 기록 없음 · {hist} 같은 요일·시각 평균",
+            icon_name="anomaly", tone="anomaly",
+        ) if exp else components.kpi_tile(
             "기간 이상 행수", fmt.fmt_count(events.get("count")) if ev_ok else dash,
             sub="규칙 3상 동시 · 관찰 기록", icon_name="anomaly", tone="anomaly",
         ),
         "surge": components.kpi_tile(
             "이상 급증 설비", f"{alerts['surge_count']}대" if not alerts["errors"] else dash,
-            sub=f"평소 건수의 {settings['anomaly_surge_factor']:g}배 이상", icon_name="pulse",
+            sub=f"{hist} 관측 · 평소의 {settings['anomaly_surge_factor']:g}배 이상", icon_name="pulse",
         ),
         "found": components.kpi_tile(
             "발견 설비",
             (lambda s: f"{s['count']} / {s['cap']}")(ui_logic.discovered_module_summary(status)) if st_ok else dash,
-            sub="O-5 최대 13 상한", icon_name="grid",
+            sub=f"{hist} 관측 · 최대 13대", icon_name="grid",
         ),
         "alerts": components.kpi_tile(
             "경고 건수", str(alerts["count"]) if not alerts["errors"] else dash,
@@ -274,7 +323,7 @@ def _render_kpis(st, bundle, ctx, forecast_ok, totals, buckets, unit, profile) -
         )
 
 
-def _render_chart(st, bundle, ctx, rows, profile) -> None:
+def _render_chart(st, bundle, ctx, rows, profile, options=None, picked=None) -> None:
     """예측 그래프 — 예측값만 표시(검증 실제값 비교 없음).
 
     시간: 전체 기간 1시간 단위 · 일: 날짜 1개의 0–23시 · 주: 주 1개의 7일×24시간 ·
@@ -284,7 +333,8 @@ def _render_chart(st, bundle, ctx, rows, profile) -> None:
     settings = ctx["settings"]
     unit = ctx["gran"]
     start, end = ctx["start"], ctx["end"]
-    options = page_logic.period_options(rows, unit, start=start, end=end)
+    if options is None:
+        options, picked = _picked_period(st, rows, unit, start, end)
     with components.panel(height=H_MAIN, key=PANEL_CHART):
         head_l, head_r = st.columns([3, 6], vertical_alignment="center")
         with head_l:
@@ -294,13 +344,11 @@ def _render_chart(st, bundle, ctx, rows, profile) -> None:
             )
         with head_r:
             c_pick, c_metric, c_info = st.columns([4, 4, 1], vertical_alignment="center")
-            picked = None
             with c_pick:
                 if options:
                     labels = [o["label"] for o in options]
-                    first_full = next((i for i, o in enumerate(options) if not o["partial"]), 0)
                     choice = st.selectbox(
-                        "날짜" if unit == "일" else "주", labels, index=first_full,
+                        "날짜" if unit == "일" else "주", labels, index=options.index(picked),
                         key=f"home_pick_{unit}", label_visibility="collapsed",
                     )
                     picked = options[labels.index(choice)] if choice in labels else options[0]

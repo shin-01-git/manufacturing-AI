@@ -56,3 +56,22 @@ def test_import_bpart_picks_lowest_may_mae(tmp_path):
     row = next(csv.DictReader((out / "forecast_bpart.csv").open(encoding="utf-8")))
     assert "actual" not in row
     assert float(row["pred_pow"]) == 1000 and abs(float(row["pred_bill"]) - 180000) < 1e-6
+
+
+def test_period_bounds():
+    from datetime import date
+    assert page_logic.period_bounds("일", "2025-05-12") == (date(2025, 5, 12), date(2025, 5, 12))
+    assert page_logic.period_bounds("주", "2025-05-12") == (date(2025, 5, 12), date(2025, 5, 18))
+
+
+def test_anomaly_expected_weekday_hour_mean():
+    import pandas as pd
+    # 과거 2주(월요일 2번): 월 03시에 4건, 2건 → 평균 3건. 다른 시각은 0건.
+    frame = pd.DataFrame({
+        "hour": pd.to_datetime(["2025-04-07 03:00", "2025-04-14 03:00", "2025-04-20 23:00"]),
+        "module": ["a", "a", "a"], "type": ["t", "t", "t"], "count": [4, 2, 0],
+    })
+    rows = [{"id": "2025-05-12 03:00:00"}, {"id": "2025-05-12 04:00:00"}]
+    out = page_logic.anomaly_expected(frame, rows)
+    assert out["expected"] == 3.0
+    assert page_logic.anomaly_expected(None, rows) is None

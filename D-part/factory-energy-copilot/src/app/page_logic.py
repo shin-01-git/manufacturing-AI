@@ -1060,3 +1060,37 @@ def rows_in_period(
         if bucket_key(moment, unit)[0] == key:
             out.append(row)
     return sorted(out, key=lambda r: r["id"])
+
+
+def period_bounds(unit: str, key: str) -> tuple[date, date]:
+    """``period_options`` key → (시작일, 종료일) 포함 범위."""
+
+    d = date.fromisoformat(key)
+    return (d, d) if unit == "일" else (d, d + timedelta(days=6))
+
+
+def anomaly_expected(frame: Any, rows: list[dict[str, Any]], *, start: Any = None, end: Any = None) -> dict[str, Any] | None:
+    """5월처럼 이상 기록이 없는 기간의 참고 예상 건수.
+
+    과거 anomaly_hourly(시간·설비·유형별 건수)에서 (요일, 시) 평균 건수를 구하고,
+    선택 기간의 예측 시점마다 더한다. 평균의 분모는 과거 기간의 해당 요일 일수(0건인 날 포함).
+    반환: expected, hist_start, hist_end. 데이터가 없으면 None.
+    """
+
+    import pandas as pd
+
+    if frame is None or len(frame) == 0 or not {"hour", "count"}.issubset(frame.columns):
+        return None
+    hour = pd.to_datetime(frame["hour"])
+    tot = frame.assign(h=hour).groupby("h")["count"].sum()
+    days = pd.date_range(hour.min().normalize(), hour.max().normalize(), freq="D")
+    n_wd = pd.Series(days.weekday).value_counts().to_dict()
+    by = tot.groupby([tot.index.weekday, tot.index.hour]).sum().to_dict()
+    s, e = to_date(start), to_date(end)
+    exp = 0.0
+    for row in rows:
+        m = _row_dt(row.get("id", ""))
+        if m is None or not _in_range(m.date(), s, e):
+            continue
+        exp += by.get((m.weekday(), m.hour), 0) / max(n_wd.get(m.weekday(), 1), 1)
+    return {"expected": exp, "hist_start": days.min().date(), "hist_end": days.max().date()}
