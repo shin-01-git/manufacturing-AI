@@ -151,11 +151,16 @@ def load_bundle(artifacts_dir: Path | None = None) -> dict[str, Any]:
     )
     # 6.5만 건 이벤트를 매 rerun마다 훑지 않도록 기간은 로드 시 한 번만 계산한다.
     bundle["events_period"] = ui_logic.events_period(bundle["events"])
+    # B-part 선택 모델 예측(있으면 홈 예측 그래프·KPI가 이것을 쓴다). 없으면 predictions.csv.
+    bundle["forecast_bpart"] = tools_mod.get_forecast_summary(
+        artifacts_dir=artifacts_dir, name=tools_mod.BPART_FORECAST_NAME
+    )
+    bundle["forecast_bpart_meta"] = _load_json(tools_mod.BPART_META_NAME, artifacts_dir)
     return bundle
 
 
 _SIGNATURE_FILES = (
-    "predictions.csv", "evaluation.json", "module_status.csv", "anomaly_events.parquet",
+    "predictions.csv", "forecast_bpart.csv", "forecast_bpart_meta.json", "evaluation.json", "module_status.csv", "anomaly_events.parquet",
     "anomaly_hourly.parquet", ACTUAL_VS_PRED_NAME, HOURLY_MODULES_NAME, REBUILD_META_NAME,
     SELECTION_NAME,
 )

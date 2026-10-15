@@ -1004,3 +1004,59 @@ def executive_monthly(frame, month: str | None, settings: dict[str, Any], *, top
         "ranking": ranking, "reduction_candidates": [r["module"] for r in ranking[:top]],
         "increase_driver": driver, "watch": watch,
     }
+
+
+_WEEKDAY_KO = "월화수목금토일"
+
+
+def period_options(
+    rows: list[dict[str, Any]], unit: str, *, start: Any = None, end: Any = None, min_points: int = 2
+) -> list[dict[str, Any]]:
+    """예측 그래프의 날짜(일)/주 선택지. 각 항목: key, label, n, partial.
+
+    시점이 ``min_points`` 미만인 구간(예: 5/31 00시 1개)은 선 하나 그릴 수 없어 뺀다.
+    """
+
+    if unit not in ("일", "주"):
+        return []
+    s, e = to_date(start), to_date(end)
+    seen: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        moment = _row_dt(row.get("id", ""))
+        if moment is None or not _in_range(moment.date(), s, e):
+            continue
+        key, _ = bucket_key(moment, unit)
+        b = seen.setdefault(key, {"key": key, "n": 0})
+        b["n"] += 1
+    out = []
+    for key in sorted(seen):
+        b = seen[key]
+        if b["n"] < min_points:
+            continue
+        d = date.fromisoformat(key)
+        full = _full_size(unit, key)
+        partial = b["n"] < full
+        if unit == "일":
+            label = f"{d.strftime('%m-%d')} ({_WEEKDAY_KO[d.weekday()]})"
+        else:
+            label = f"{d.strftime('%m-%d')} – {(d + timedelta(days=6)).strftime('%m-%d')}"
+        if partial:
+            label += f" · {b['n']}시간"
+        out.append({"key": key, "label": label, "n": b["n"], "partial": partial})
+    return out
+
+
+def rows_in_period(
+    rows: list[dict[str, Any]], unit: str, key: str, *, start: Any = None, end: Any = None
+) -> list[dict[str, Any]]:
+    """``period_options``의 key 하나에 속한 시간별 행(시간순)."""
+
+    s, e = to_date(start), to_date(end)
+    out = []
+    for row in rows:
+        moment = _row_dt(row.get("id", ""))
+        if moment is None or not _in_range(moment.date(), s, e):
+            continue
+        if bucket_key(moment, unit)[0] == key:
+            out.append(row)
+    return sorted(out, key=lambda r: r["id"])

@@ -38,6 +38,8 @@ from config import config
 
 # Fixed artifact file names (never user-controlled).
 PREDICTIONS_NAME = "predictions.csv"
+BPART_FORECAST_NAME = "forecast_bpart.csv"  # B-part 선택 모델 예측(scripts/import_bpart_forecast.py)
+BPART_META_NAME = "forecast_bpart_meta.json"
 EVALUATION_NAME = "evaluation.json"
 MODULE_STATUS_NAME = "module_status.csv"
 ANOMALY_EVENTS_NAME = "anomaly_events.parquet"
@@ -138,8 +140,9 @@ def get_forecast_summary(
     end: str | datetime | None = None,
     *,
     artifacts_dir: Path | None = None,
+    name: str = PREDICTIONS_NAME,
 ) -> dict[str, Any]:
-    """Summarise the May forecast window from ``predictions.csv``.
+    """Summarise the May forecast window from ``predictions.csv`` (or ``name``).
 
     Input schema:
         start, end: optional inclusive ``YYYY-MM-DD[ HH:MM:SS]`` bounds on ``id``.
@@ -159,16 +162,16 @@ def get_forecast_summary(
         return _error("bad_input", str(exc))
 
     try:
-        path = resolve_artifact_path(PREDICTIONS_NAME, artifacts_dir=artifacts_dir)
+        path = resolve_artifact_path(name, artifacts_dir=artifacts_dir)
     except PathSecurityError as exc:
         return _error("path_denied", str(exc))
     if not path.exists():
-        return _error("not_found", f"{PREDICTIONS_NAME} 없음 ({NO_DATA})")
+        return _error("not_found", f"{name} 없음 ({NO_DATA})")
 
     raw_rows = _read_csv_rows(path)
     required = {"id", "pred_pow", "pred_bill", "pred_carbon"}
     if not raw_rows or not required.issubset(raw_rows[0].keys()):
-        return _error("bad_schema", f"{PREDICTIONS_NAME} 스키마 불일치")
+        return _error("bad_schema", f"{name} 스키마 불일치")
 
     rows: list[dict[str, Any]] = []
     for raw in raw_rows:

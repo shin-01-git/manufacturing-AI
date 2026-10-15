@@ -34,7 +34,7 @@ H_LOW = 360
 METRIC_OPTIONS = ["요금", "탄소", "전력량"]
 _METRIC_KEY = {"요금": "bill", "탄소": "carbon", "전력량": "pow"}
 
-UNIT_DESC = {"시간": "1시간 단위", "일": "일 합계", "주": "주 합계", "월": "월 합계"}
+UNIT_DESC = {"시간": "전체 기간 · 1시간 단위", "일": "선택 날짜 · 시간별", "주": "선택 주 · 시간별", "월": "일 합계"}
 CARBON_UNIT_NOTE = "탄소 = kWh × 0.424 kgCO₂ (교안 기준)"
 
 
@@ -45,6 +45,10 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> None:
     evaluation = bundle["evaluation"]
     settings = ctx["settings"]
     alerts = ctx["alerts"]
+    # B-part 선택 모델 예측(forecast_bpart.csv)이 있으면 홈 예측 그래프·KPI는 그것을 쓴다.
+    bpart = bundle.get("forecast_bpart") or {}
+    if "error" not in bpart and bpart.get("count", 0) > 0:
+        forecast = bpart
     forecast_ok = "error" not in forecast and forecast.get("count", 0) > 0
 
     _render_strip(st, alerts)
@@ -271,32 +275,47 @@ def _render_kpis(st, bundle, ctx, forecast_ok, totals, buckets, unit, profile) -
 
 
 def _render_chart(st, bundle, ctx, rows, profile) -> None:
-    avp = bundle["actual_vs_pred"]
+    """예측 그래프 — 예측값만 표시(검증 실제값 비교 없음).
+
+    시간: 전체 기간 1시간 단위 · 일: 날짜 1개의 0–23시 · 주: 주 1개의 7일×24시간 ·
+    월: 기간 내 일 합계.
+    """
+
     settings = ctx["settings"]
+    unit = ctx["gran"]
+    start, end = ctx["start"], ctx["end"]
+    options = page_logic.period_options(rows, unit, start=start, end=end)
     with components.panel(height=H_MAIN, key=PANEL_CHART):
-        unit = ctx["gran"]
-        head_l, head_r = st.columns([4, 5], vertical_alignment="center")
+        head_l, head_r = st.columns([3, 6], vertical_alignment="center")
         with head_l:
             st.markdown(
                 components.panel_header("예측", icon_name="forecast", desc=UNIT_DESC.get(unit, unit)),
                 unsafe_allow_html=True,
             )
         with head_r:
-            c_metric, c_actual, c_info = st.columns([4, 3, 1], vertical_alignment="center")
+            c_pick, c_metric, c_info = st.columns([4, 4, 1], vertical_alignment="center")
+            picked = None
+            with c_pick:
+                if options:
+                    labels = [o["label"] for o in options]
+                    first_full = next((i for i, o in enumerate(options) if not o["partial"]), 0)
+                    choice = st.selectbox(
+                        "날짜" if unit == "일" else "주", labels, index=first_full,
+                        key=f"home_pick_{unit}", label_visibility="collapsed",
+                    )
+                    picked = options[labels.index(choice)] if choice in labels else options[0]
             with c_metric:
                 metric_label = st.segmented_control(
                     "지표", options=METRIC_OPTIONS, default=profile["metric"], key=f"home_metric_{ctx['role']}",
                     label_visibility="collapsed",
                 )
-            with c_actual:
-                show_actual = st.toggle("실제값 비교(검증)", value=False, key="home_show_actual")
             with c_info:
                 with st.popover(":material/info:"):
                     st.markdown(
-                        "- 상단 시간/일/주/월 선택에 따라 차트 단위가 바뀜\n"
-                        "- 예측구간 P5–P95는 시간 단위에서만 표시(검증 구간 잔차 분위수 기반, 잠정)\n"
-                        "- 5월 정답은 모델 선택에 사용하지 않음\n"
-                        "- 실제값 비교는 검증 모드 전용(실제 운영에서는 미래 실제값이 없음)"
+                        "- 상단 시간/일/주/월 선택에 따라 그래프 단위가 바뀜\n"
+                        "- 일: 날짜를 고르면 그 날 0–23시 · 주: 주를 고르면 그 주 시간별\n"
+                        "- 예측값만 표시(5월 실제값과의 비교는 표시하지 않음)\n"
+                        "- 요금=전력량×단가, 탄소=전력량×배출계수라 세 지표의 모양은 같고 축만 다름"
                     )
         st.caption(_basis_sentence(bundle, settings))
         metric = _METRIC_KEY.get(metric_label or "요금", "bill")
@@ -308,57 +327,61 @@ def _render_chart(st, bundle, ctx, rows, profile) -> None:
             return
 
         rate = {"pow": 1.0, "bill": float(settings["bill_rate"]), "carbon": float(settings["carbon_rate"])}[metric]
-        if unit != "시간":
-            actual_rows = _merge_rows(rows, avp) if show_actual and "error" not in avp else None
-            _render_period_view(st, rows, unit, ctx["start"], ctx["end"], metric, rate, actual_rows)
-            if show_actual and "error" in avp:
-                st.caption("실제값 artifact(actual_vs_pred.csv)를 불러오지 못해 예측만 표시합니다.")
+        if unit == "월":
+            _render_period_view(st, rows, "일", start, end, metric, rate)
             return
-        merged = _merge_rows(rows, avp)
-        buckets = page_logic.resample_rows(
-            merged, unit, ("pred_pow", "pred_low", "pred_high", "actual_pow"),
-            start=ctx["start"], end=ctx["end"],
-        )
-        if unit != "시간":
-            # Partial day/week sums are not comparable with full buckets; the bar panel
-            # below still shows them (lighter), so the line chart keeps complete ones.
-            complete = [b for b in buckets if not b["partial"]]
-            buckets = complete or buckets  # 월 단위는 5월 한 구간(부분)뿐이라 그대로 표시
-        if not buckets:
-            st.markdown(components.empty_state("선택 기간에 완전한 구간 없음"), unsafe_allow_html=True)
+        if unit in ("일", "주"):
+            if picked is None:
+                st.markdown(components.empty_state("선택 기간에 예측 데이터 없음"), unsafe_allow_html=True)
+                return
+            sel = page_logic.rows_in_period(rows, unit, picked["key"], start=start, end=end)
+        else:
+            sel = [r for r in rows if page_logic._in_range(
+                page_logic._row_dt(r["id"]).date(), page_logic.to_date(start), page_logic.to_date(end))]
+        if not sel:
+            st.markdown(components.empty_state("선택 기간에 예측 데이터 없음"), unsafe_allow_html=True)
             return
         chart_rows = [
             {
-                "id": b["key"],
-                "pred_pow": (b["pred_pow"] or 0.0) * rate,
-                # 시간별 P5/P95를 더한 값은 일·주 합의 P5/P95가 아니므로 시간 단위에서만 표시
-                "pred_low": None if (unit != "시간" or b["pred_low"] is None) else b["pred_low"] * rate,
-                "pred_high": None if (unit != "시간" or b["pred_high"] is None) else b["pred_high"] * rate,
+                "id": r["id"],
+                "pred_pow": r["pred_pow"] * rate,
+                "pred_low": None if r.get("pred_low") is None else r["pred_low"] * rate,
+                "pred_high": None if r.get("pred_high") is None else r["pred_high"] * rate,
             }
-            for b in buckets
+            for r in sel
         ]
-        actuals = (
-            {b["key"]: b["actual_pow"] * rate for b in buckets if b["actual_pow"] is not None}
-            if show_actual and "error" not in avp else None
-        )
         fig = charts.forecast_band_chart(
-            chart_rows, actuals=actuals, height=theme.chart_height(H_MAIN, has_caption=True) - 26,
+            chart_rows, actuals=None, height=theme.chart_height(H_MAIN, has_caption=True) - 26,
             metric=metric, color=theme.COLOR["accent"],
         )
+        if unit == "일":
+            fig.update_xaxes(tickformat="%H시", dtick=3 * 3600 * 1000, title="")
+        elif unit == "주":
+            fig.update_xaxes(tickformat="%m-%d", dtick=24 * 3600 * 1000, title="")
         st.plotly_chart(fig, width="stretch", config=charts.PLOTLY_CONFIG)
         vals = [r["pred_pow"] for r in chart_rows]
-        spread = max(vals) - min(vals) if vals else 0.0
-        pct = spread / (sum(vals) / len(vals)) * 100 if vals and sum(vals) else 0.0
-        note = (
-            f"y축 확대(0 시작 아님) · 최대-최소 차이 {spread:,.2f} {config.UNIT_LABELS[metric]} ({pct:.2f}%)"
-            + (" · 예측구간 P5–P95 잠정" if unit == "시간" else " · 부분 구간 제외 · 구간 밴드는 시간 단위에서만")
+        mean = sum(vals) / len(vals)
+        imax = max(range(len(vals)), key=lambda k: vals[k])
+        imin = min(range(len(vals)), key=lambda k: vals[k])
+        u = config.UNIT_LABELS[metric]
+        scope = picked["label"] if picked else "전체 기간"
+        st.caption(
+            f"{scope} · 최대 {sel[imax]['id'][5:13]}시 {vals[imax]:,.2f} {u} · "
+            f"최소 {sel[imin]['id'][5:13]}시 {vals[imin]:,.2f} {u} · "
+            f"차이 {vals[imax] - vals[imin]:,.2f} {u} ({(vals[imax] - vals[imin]) / mean * 100 if mean else 0:.2f}%) · "
+            "y축 확대(0 시작 아님)"
         )
-        if show_actual and "error" in avp:
-            note = "실제값 artifact(actual_vs_pred.csv)를 불러오지 못해 예측만 표시합니다."
-        st.caption(note)
 
 
 def _basis_sentence(bundle: dict[str, Any], settings: dict[str, Any]) -> str:
+    meta = bundle.get("forecast_bpart_meta") or {}
+    bp = bundle.get("forecast_bpart") or {}
+    if "error" not in meta and "error" not in bp and bp.get("count"):
+        return (
+            f"{meta.get('label', meta.get('model', '—'))} 모델 · 2024-12-01 – {meta.get('train_end', '—')} 실측으로 학습, "
+            f"이후는 자기 예측값을 이어 붙이는 재귀 예측 · {bp.get('count')}개 시점 · "
+            f"요금=전력량×{settings['bill_rate']:g}, 탄소=전력량×{settings['carbon_rate']:g}"
+        )
     b = page_logic.forecast_basis(bundle)
     d = lambda v: v if v else "—"  # noqa: E731
     return (
