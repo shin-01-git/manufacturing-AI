@@ -1,0 +1,76 @@
+{
+  "best_model": "train_mean",
+  "cv_best_model": "train_mean",
+  "best_ml_model": "ridge_lags",
+  "selection_metric": "Lowest mean MAE across identical three historical 720-hour folds; May is a repeatedly inspected comparison set.",
+  "feature_set": "calendar + lag + past means",
+  "train_range": {
+    "start": "2024-12-01 00:00:00",
+    "end": "2025-04-29 23:00:00",
+    "valid_hour_rows": 3600
+  },
+  "may_holdout_range": {
+    "start": "2025-05-10 00:00:00",
+    "end": "2025-05-31 00:00:00",
+    "rows": 505
+  },
+  "may_holdout_metrics": {
+    "MAE_hourly_pow": 89.0314876276913,
+    "MAE_bill_krw": 16.025667772984434,
+    "MAE_carbon_kg": 0.03774935075414111
+  },
+  "data_quality": {
+    "equipment_count": 13,
+    "low_coverage_hours": 1
+  },
+  "unit_assumptions": {
+    "activePower": "W per session-14 pages 9/25",
+    "hourly_pow": "Wh inferred for truth",
+    "electricity_rate_won_per_kwh": 180,
+    "carbon_factor_kg_per_kwh": 0.424,
+    "truth_may_bill_to_calculated_bill_median_ratio": 1000.0,
+    "truth_may_carbon_to_calculated_carbon_median_ratio": 1000.0000000000001
+  },
+  "model_comparison": [
+    {
+      "model": "lightgbm_reference",
+      "cv_mae": 78.23856600160588,
+      "mae": 84.34156729230884
+    },
+    {
+      "model": "extra_trees_lags",
+      "cv_mae": 77.71688288017239,
+      "mae": 88.63798698553978
+    },
+    {
+      "model": "train_median",
+      "cv_mae": 77.23228984053505,
+      "mae": 88.80804878349801
+    },
+    {
+      "model": "ridge_lags",
+      "cv_mae": 77.3927346270966,
+      "mae": 88.84438315230253
+    },
+    {
+      "model": "train_mean",
+      "cv_mae": 77.23025191337491,
+      "mae": 89.0314876276913
+    },
+    {
+      "model": "xgboost_lags",
+      "cv_mae": 77.49412927855703,
+      "mae": 91.63411573384963
+    },
+    {
+      "model": "hist_lags",
+      "cv_mae": 77.96766247306319,
+      "mae": 92.52275663658827
+    },
+    {
+      "model": "lightgbm_lags",
+      "cv_mae": 78.14650800693964,
+      "mae": 93.20895349510992
+    }
+  ]
+}

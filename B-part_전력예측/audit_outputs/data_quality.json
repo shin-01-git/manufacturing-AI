@@ -1,0 +1,127 @@
+{
+  "raw_rows": 33696013,
+  "invalid_rows": 0,
+  "duplicates_removed": 0,
+  "non_5_second_intervals": 0,
+  "source": "previously verified full raw aggregation",
+  "counters": [
+    {
+      "module": "1(PM-3)",
+      "counter_delta": 10837489.0,
+      "integrated_power_energy": 10837493.258944444,
+      "ratio": 0.9999996070175692,
+      "negative_steps_inside_chunks": 0,
+      "negative_chunk_boundaries": 0
+    },
+    {
+      "module": "11(우측분전반1)",
+      "counter_delta": 10835682.0,
+      "integrated_power_energy": 10835686.308652775,
+      "ratio": 0.9999996023645706,
+      "negative_steps_inside_chunks": 0,
+      "negative_chunk_boundaries": 0
+    },
+    {
+      "module": "12(4호기)",
+      "counter_delta": 10836119.0,
+      "integrated_power_energy": 10836121.925069444,
+      "ratio": 0.999999730063074,
+      "negative_steps_inside_chunks": 0,
+      "negative_chunk_boundaries": 0
+    },
+    {
+      "module": "13(3호기)",
+      "counter_delta": 10831258.0,
+      "integrated_power_energy": 10831263.080944443,
+      "ratio": 0.9999995309000984,
+      "negative_steps_inside_chunks": 0,
+      "negative_chunk_boundaries": 0
+    },
+    {
+      "module": "14(2호기)",
+      "counter_delta": 10834922.0,
+      "integrated_power_energy": 10834925.87897222,
+      "ratio": 0.9999996419936542,
+      "negative_steps_inside_chunks": 0,
+      "negative_chunk_boundaries": 0
+    },
+    {
+      "module": "15(예비건조기)",
+      "counter_delta": 10837471.0,
+      "integrated_power_energy": 10837475.256861111,
+      "ratio": 0.9999996072091504,
+      "negative_steps_inside_chunks": 0,
+      "negative_chunk_boundaries": 0
+    },
+    {
+      "module": "16(호이스트)",
+      "counter_delta": 10835157.0,
+      "integrated_power_energy": 10835158.726944445,
+      "ratio": 0.9999998406165992,
+      "negative_steps_inside_chunks": 0,
+      "negative_chunk_boundaries": 0
+    },
+    {
+      "module": "17(6호기)",
+      "counter_delta": 10835793.0,
+      "integrated_power_energy": 10835796.714972222,
+      "ratio": 0.999999657157446,
+      "negative_steps_inside_chunks": 0,
+      "negative_chunk_boundaries": 0
+    },
+    {
+      "module": "18(우측분전반2)",
+      "counter_delta": 10836167.0,
+      "integrated_power_energy": 10836171.51925,
+      "ratio": 0.9999995829477236,
+      "negative_steps_inside_chunks": 0,
+      "negative_chunk_boundaries": 0
+    },
+    {
+      "module": "2(L-1전등)",
+      "counter_delta": 10835695.0,
+      "integrated_power_energy": 10835697.455569442,
+      "ratio": 0.9999997733815056,
+      "negative_steps_inside_chunks": 0,
+      "negative_chunk_boundaries": 0
+    },
+    {
+      "module": "3(분쇄기(2))",
+      "counter_delta": 10834452.0,
+      "integrated_power_energy": 10834456.363541666,
+      "ratio": 0.9999995972532888,
+      "negative_steps_inside_chunks": 0,
+      "negative_chunk_boundaries": 0
+    },
+    {
+      "module": "4(분쇄기(1))",
+      "counter_delta": 10838626.0,
+      "integrated_power_energy": 10838629.977027778,
+      "ratio": 0.9999996330691436,
+      "negative_steps_inside_chunks": 0,
+      "negative_chunk_boundaries": 0
+    },
+    {
+      "module": "5(좌측분전반)",
+      "counter_delta": 10836936.0,
+      "integrated_power_energy": 10836940.060222223,
+      "ratio": 0.999999625334993,
+      "negative_steps_inside_chunks": 0,
+      "negative_chunk_boundaries": 0
+    }
+  ],
+  "equipment_count": 13,
+  "complete_hours": 3600,
+  "partial_or_missing_hours": 1,
+  "start": "2024-12-01 00:00:00",
+  "end": "2025-04-30 00:00:00",
+  "unit_evidence": {
+    "pdf": "session-14.pdf pages 9 and 25",
+    "activePower": "W",
+    "energy": "Wh",
+    "truth_unit": "Wh inferred from lecture convention and matching aggregation scale",
+    "sample_rows": 50000,
+    "W_exceeds_VI_fraction": 0.0,
+    "kW_exceeds_VI_fraction": 1.0
+  }
+}

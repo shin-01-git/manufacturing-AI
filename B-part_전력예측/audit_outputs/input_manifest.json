@@ -1,0 +1,14 @@
+{
+  "inputs": {
+    "rtu_data_full.csv": {
+      "bytes": 4909245995,
+      "mtime_ns": 1791861731981880200
+    },
+    "rtu_ground_truth_may.csv": {
+      "bytes": 46000,
+      "mtime_ns": 1791861628868022800
+    }
+  },
+  "cache": "equipment_hourly.csv",
+  "python": "3.9.19"
+}
