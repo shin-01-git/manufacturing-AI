@@ -34,7 +34,7 @@ H_LOW = 360
 METRIC_OPTIONS = ["요금", "탄소", "전력량"]
 _METRIC_KEY = {"요금": "bill", "탄소": "carbon", "전력량": "pow"}
 
-VIEW_OPTIONS = ["시간대별", "기간 합계"]
+UNIT_DESC = {"시간": "1시간 단위", "일": "일 합계", "주": "주 합계", "월": "월 합계"}
 CARBON_UNIT_NOTE = "탄소 = kWh × 0.424 kgCO₂ (교안 기준)"
 
 
@@ -274,19 +274,15 @@ def _render_chart(st, bundle, ctx, rows, profile) -> None:
     avp = bundle["actual_vs_pred"]
     settings = ctx["settings"]
     with components.panel(height=H_MAIN, key=PANEL_CHART):
-        head_l, head_r = st.columns([3, 6], vertical_alignment="center")
+        unit = ctx["gran"]
+        head_l, head_r = st.columns([4, 5], vertical_alignment="center")
         with head_l:
             st.markdown(
-                components.panel_header("예측", icon_name="forecast", desc="시간대별 · 기간 합계"),
+                components.panel_header("예측", icon_name="forecast", desc=UNIT_DESC.get(unit, unit)),
                 unsafe_allow_html=True,
             )
         with head_r:
-            c_view, c_metric, c_actual, c_info = st.columns([4, 4, 3, 1], vertical_alignment="center")
-            with c_view:
-                view = st.segmented_control(
-                    "보기", options=VIEW_OPTIONS, default=VIEW_OPTIONS[0], key="home_chart_view",
-                    label_visibility="collapsed",
-                ) or VIEW_OPTIONS[0]
+            c_metric, c_actual, c_info = st.columns([4, 3, 1], vertical_alignment="center")
             with c_metric:
                 metric_label = st.segmented_control(
                     "지표", options=METRIC_OPTIONS, default=profile["metric"], key=f"home_metric_{ctx['role']}",
@@ -297,7 +293,8 @@ def _render_chart(st, bundle, ctx, rows, profile) -> None:
             with c_info:
                 with st.popover(":material/info:"):
                     st.markdown(
-                        "- 예측구간 P5–P95는 검증 구간 잔차 분위수 기반(잠정)\n"
+                        "- 상단 시간/일/주/월 선택에 따라 차트 단위가 바뀜\n"
+                        "- 예측구간 P5–P95는 시간 단위에서만 표시(검증 구간 잔차 분위수 기반, 잠정)\n"
                         "- 5월 정답은 모델 선택에 사용하지 않음\n"
                         "- 실제값 비교는 검증 모드 전용(실제 운영에서는 미래 실제값이 없음)"
                     )
@@ -311,11 +308,12 @@ def _render_chart(st, bundle, ctx, rows, profile) -> None:
             return
 
         rate = {"pow": 1.0, "bill": float(settings["bill_rate"]), "carbon": float(settings["carbon_rate"])}[metric]
-        unit = ctx["gran"]
-        if view == VIEW_OPTIONS[1]:
-            _render_period_view(st, rows, unit, ctx["start"], ctx["end"], metric, rate)
+        if unit != "시간":
+            actual_rows = _merge_rows(rows, avp) if show_actual and "error" not in avp else None
+            _render_period_view(st, rows, unit, ctx["start"], ctx["end"], metric, rate, actual_rows)
+            if show_actual and "error" in avp:
+                st.caption("실제값 artifact(actual_vs_pred.csv)를 불러오지 못해 예측만 표시합니다.")
             return
-        unit = "시간"  # '시간대별' 보기는 항상 1시간 단위(일/주/월 합계는 '기간 합계' 보기)
         merged = _merge_rows(rows, avp)
         buckets = page_logic.resample_rows(
             merged, unit, ("pred_pow", "pred_low", "pred_high", "actual_pow"),
@@ -402,19 +400,42 @@ def _render_alert_panel(st, alerts: dict[str, Any]) -> None:
             st.caption(f"예측구간 이탈 {alerts['interval_count']}시간 중 편차 큰 20건만 표시")
 
 
-def _render_period_view(st, rows, unit, start, end, metric, rate) -> None:
-    """예측 패널의 '기간 합계' 보기 — 일/주 합계를 시간대별과 다른 색으로."""
+def _render_period_view(st, rows, unit, start, end, metric, rate, actual_rows=None) -> None:
+    """헤더 단위(일/주/월)에 맞춘 예측 합계 — 시간 단위 차트와 다른 색."""
 
-    shown_unit = "일" if unit in ("시간", "월") else unit  # 예측 기간이 1개월 미만이라 월은 일로
-    buckets = page_logic.resample_rows(rows, shown_unit, ("pred_pow", "pred_carbon"), start=start, end=end)
-    scaled = [{**b, "pred_pow": None if b.get("pred_pow") is None else b["pred_pow"] * rate} for b in buckets]
     label = {"pow": "전력량", "bill": "요금", "carbon": "탄소"}[metric]
     fmt_fn = {"pow": fmt.fmt_pow, "bill": fmt.fmt_bill, "carbon": fmt.fmt_carbon}[metric]
+    u = config.UNIT_LABELS[metric]
+    height = theme.chart_height(H_MAIN, has_caption=True) - 26
+    src = actual_rows if actual_rows is not None else rows
+    buckets = page_logic.resample_rows(src, unit, ("pred_pow", "actual_pow"), start=start, end=end)
+    scaled = [
+        {**b,
+         "pred_pow": None if b.get("pred_pow") is None else b["pred_pow"] * rate,
+         "actual_pow": None if b.get("actual_pow") is None else b["actual_pow"] * rate}
+        for b in buckets
+    ]
+    if not scaled:
+        st.markdown(components.empty_state("선택 기간에 예측 데이터 없음"), unsafe_allow_html=True)
+        return
+    show_act = actual_rows is not None
+    if unit == "월" or len(scaled) < 3:
+        # 예측 기간(5/10–5/31)이 한 달이 안 돼 월은 1개 구간뿐 → 점+선 대신 합계 막대
+        st.plotly_chart(
+            charts.period_total_bar(scaled, height=height, color=theme.metric("info"),
+                                    axis_title=f"{unit}별 예측 {label}({u})", fmt_fn=fmt_fn,
+                                    show_actual=show_act),
+            width="stretch", config=charts.PLOTLY_CONFIG,
+        )
+        days = sum(b["n"] for b in scaled) / 24
+        st.caption(
+            f"{unit} 합계 · 예측 기간에 포함된 {days:.0f}일분만 합산(월 전체 아님) · 0부터 시작하는 막대"
+        )
+        return
     st.plotly_chart(
         charts.period_bar_chart(
-            scaled, height=theme.chart_height(H_MAIN, has_caption=True) - 26,
-            color=theme.metric("info"), axis_title=f"{shown_unit}별 예측 {label}({config.UNIT_LABELS[metric]})",
-            fmt_fn=fmt_fn,
+            scaled, height=height, color=theme.metric("info"),
+            axis_title=f"{unit}별 예측 {label}({u})", fmt_fn=fmt_fn, show_actual=show_act,
         ),
         width="stretch", config=charts.PLOTLY_CONFIG,
     )
@@ -423,8 +444,8 @@ def _render_period_view(st, rows, unit, start, end, metric, rate) -> None:
         mean = sum(full) / len(full)
         spread = max(full) - min(full)
         st.caption(
-            f"{shown_unit} 합계 · y축 확대(0 시작 아님) · 최대-최소 차이 {spread:,.2f} "
-            f"{config.UNIT_LABELS[metric]} ({spread / mean * 100 if mean else 0:.2f}%) · 빈 원 = 부분 구간"
+            f"{unit} 합계 · y축 확대(0 시작 아님) · 최대-최소 차이 {spread:,.2f} {u} "
+            f"({spread / mean * 100 if mean else 0:.2f}%) · 빈 원 = 부분 구간(평균·확대 범위에서 제외)"
         )
 
 

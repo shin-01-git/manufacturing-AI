@@ -534,7 +534,7 @@ def anomaly_vs_typical_bar(hours: list[int], counts: list[int], *, typical: floa
 # anomaly timeline
 # ---------------------------------------------------------------------------
 def period_bar_chart(buckets: list[dict[str, Any]], *, height: int = 220, color: str | None = None,
-                     axis_title: str = "전력량(kWh)", fmt_fn=None):
+                     axis_title: str = "전력량(kWh)", fmt_fn=None, show_actual: bool = False):
     """일/주 예측 전력량 점+선 차트 (이름은 호환을 위해 유지).
 
     일별 합계 차이가 작아 0부터 시작하는 막대는 모두 같아 보인다. 막대 y축을 자르면
@@ -552,7 +552,10 @@ def period_bar_chart(buckets: list[dict[str, Any]], *, height: int = 220, color:
     if not full:
         return _empty_fig(fmt.NO_DATA)
     _ensure_template()
-    rng = page_logic.zoom_range([b["pred_pow"] for b in full])
+    zoom_vals = [b["pred_pow"] for b in full]
+    act_full = [b for b in full if show_actual and b.get("actual_pow") is not None]
+    zoom_vals += [b["actual_pow"] for b in act_full]
+    rng = page_logic.zoom_range(zoom_vals)
     lo, hi = rng
     part = [b for b in buckets if b["partial"] and b not in full and b.get("pred_pow") is not None and lo <= b["pred_pow"] <= hi]
 
@@ -577,6 +580,13 @@ def period_bar_chart(buckets: list[dict[str, Any]], *, height: int = 220, color:
             marker=dict(size=8, color="rgba(0,0,0,0)", line=dict(color=theme.token("partial"), width=2)),
             customdata=_cd(part), hovertemplate=hover, name="부분 구간",
         ))
+    if act_full:
+        fig.add_trace(go.Scatter(
+            x=[b["label"] for b in act_full], y=[b["actual_pow"] for b in act_full], mode="lines+markers",
+            line=dict(color=theme.COLOR["muted"], width=2, dash="dash"), marker=dict(size=6, color=theme.COLOR["muted"]),
+            customdata=[[ff(b["actual_pow"])] for b in act_full],
+            hovertemplate="%{x}<br>실제 %{customdata[0]}<extra></extra>", name="실제",
+        ))
     fig.add_hline(
         y=mean, line=dict(color=theme.COLOR["muted"], width=1, dash="dot"),
         annotation_text=f"평균 {ff(mean)}", annotation_position="top left",
@@ -592,9 +602,45 @@ def period_bar_chart(buckets: list[dict[str, Any]], *, height: int = 220, color:
         ))
     order = [b["label"] for b in sorted(full + part, key=lambda b: b["key"])]
     fig.update_layout(
-        template=_TPL, height=height, showlegend=False,
+        template=_TPL, height=height, showlegend=bool(act_full),
         yaxis=dict(title=axis_title, range=[lo, hi]),
         xaxis=dict(title="", type="category", categoryorder="array", categoryarray=order),
+    )
+    return fig
+
+
+def period_total_bar(buckets: list[dict[str, Any]], *, height: int = 220, color: str | None = None,
+                     axis_title: str = "전력량(kWh)", fmt_fn=None, show_actual: bool = False):
+    """구간이 1~2개뿐일 때(월 단위 등) 합계 막대. 0부터 시작하므로 축 확대 없음."""
+
+    import plotly.graph_objects as go
+
+    bs = [b for b in buckets if b.get("pred_pow") is not None]
+    if not bs:
+        return _empty_fig(fmt.NO_DATA)
+    _ensure_template()
+    ff = fmt_fn or fmt.fmt_pow
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=[b["label"] for b in bs], y=[b["pred_pow"] for b in bs], name="예측",
+        marker=dict(color=color or theme.COLOR["accent"]), width=0.35,
+        text=[ff(b["pred_pow"]) for b in bs], textposition="outside",
+        customdata=[[b["n"]] for b in bs],
+        hovertemplate="%{x}<br>예측 %{text}<br>%{customdata[0]}시간 합계<extra></extra>",
+    ))
+    act = [b for b in bs if show_actual and b.get("actual_pow") is not None]
+    if act:
+        fig.add_trace(go.Bar(
+            x=[b["label"] for b in act], y=[b["actual_pow"] for b in act], name="실제",
+            marker=dict(color=theme.COLOR["muted"]), width=0.35,
+            text=[ff(b["actual_pow"]) for b in act], textposition="outside",
+            hovertemplate="%{x}<br>실제 %{text}<extra></extra>",
+        ))
+    top = max([b["pred_pow"] for b in bs] + [b["actual_pow"] for b in act])
+    fig.update_layout(
+        template=_TPL, height=height, showlegend=bool(act), barmode="group",
+        yaxis=dict(title=axis_title, range=[0, top * 1.25]),
+        xaxis=dict(title="", type="category"),
     )
     return fig
 
