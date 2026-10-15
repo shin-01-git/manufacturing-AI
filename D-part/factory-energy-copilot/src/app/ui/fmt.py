@@ -101,6 +101,15 @@ def fmt_big(value: Any) -> str:
     return f"{sign}{eok:,d}억 {man:,d}만" if man else f"{sign}{eok:,d}억"
 
 
+def fmt_big_split(value: Any) -> tuple[str, str]:
+    """KPI용: 숫자와 '만' 접두를 분리. 3,556,690 -> ('356', '만'), 19,759 -> ('19,759', '')."""
+
+    text = fmt_big(value)
+    if text.endswith("만"):
+        return text[:-1], "만"
+    return text, ""
+
+
 def fmt_full(value: Any, unit_key: str | None = None) -> str:
     """정확한 전체 숫자(소수 2자리) + 단위: 3,556,690.52 원."""
 
@@ -209,7 +218,7 @@ def fmt_pow_short(value: Any) -> str:
 
 
 def fmt_period(start: Any, end: Any) -> str:
-    """``2025-05-10 00:00:00`` ~ ``2025-05-31 00:00:00`` -> ``05-10 ~ 05-31 (22일)``."""
+    """``2025-05-10 00:00:00`` ~ ``2025-05-31 00:00:00`` -> ``05-10 ~ 05-31 (21일)``."""
 
     from datetime import datetime
 
@@ -222,7 +231,9 @@ def fmt_period(start: Any, end: Any) -> str:
     s, e = _d(start), _d(end)
     if s is None or e is None:
         return NO_DATA
-    days = (e - s).days + 1
+    end_hour = str(end)[11:13]
+    # 끝 시각이 00시면 그날은 1시간뿐이라 일 수에 넣지 않는다 (05-10 00시 ~ 05-31 00시 = 21일)
+    days = (e - s).days + (0 if end_hour in ("00", "") and e > s else 1)
     return f"{s:%m-%d} ~ {e:%m-%d} ({days}일)"
 
 

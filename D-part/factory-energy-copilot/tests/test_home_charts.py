@@ -53,3 +53,15 @@ def test_month_granularity_partial():
     rows = [{"id": f"2025-05-{d:02d} {h:02d}:00:00", "pred_pow": 1.0} for d in range(10, 32) for h in range(24)]
     b = page_logic.resample_rows(rows, "월", ("pred_pow",))
     assert len(b) == 1 and b[0]["label"].startswith("2025-05") and b[0]["partial"]
+
+
+def test_executive_monthly_mom_and_ranking():
+    import pandas as pd
+    hours = pd.date_range("2025-03-01", "2025-04-30 23:00", freq="h")
+    rows = [{"hour": h, "module": m, "hourly_pow": 2.0 if m == "A" else 1.0} for h in hours for m in ("A", "B")]
+    f = pd.DataFrame(rows)
+    r = page_logic.executive_monthly(f, "2025-04", page_logic.default_settings())
+    assert r["prev_month"] == "2025-03" and r["reduction_candidates"][0] == "A"
+    assert abs(r["change"]["daily_pct"]) < 1e-9          # 일평균 동일
+    assert r["change"]["energy_pct"] < 0                 # 4월(30일) < 3월(31일) 총량
+    assert abs(sum(x["share"] for x in r["ranking"]) - 100) < 1e-9

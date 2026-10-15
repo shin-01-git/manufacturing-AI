@@ -34,7 +34,8 @@ H_LOW = 360
 METRIC_OPTIONS = ["요금", "탄소", "전력량"]
 _METRIC_KEY = {"요금": "bill", "탄소": "carbon", "전력량": "pow"}
 
-CARBON_UNIT_NOTE = "탄소량 단위 미확인 — 정답 척도 기준"
+VIEW_OPTIONS = ["시간대별", "기간 합계"]
+CARBON_UNIT_NOTE = "탄소 = kWh × 0.424 kgCO₂ (교안 기준)"
 
 
 def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> None:
@@ -73,9 +74,13 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> None:
         "report": lambda: _render_report_panel(st, bundle, totals, settings),
         "top_modules": lambda: _render_top_modules_panel(st, bundle),
     }
-    for col, key in zip(st.columns(3), profile["home_row3"]):
+    row3 = [k for k in profile["home_row3"] if k != "period"]  # 기간 합계는 예측 패널 보기로 통합
+    for col, key in zip(st.columns(len(row3)), row3):
         with col:
             panels[key]()
+
+    if ctx.get("role") == page_logic.ROLE_EXECUTIVE:
+        _render_executive_report(st, bundle, settings)
 
     # Second screen (예측 근거): analysis detail for the energy role only.
     if profile["home_detail"]:
@@ -85,6 +90,74 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> None:
             _render_models(st, bundle)
         with right:
             _render_profile(st, rows, settings, forecast_ok, bundle.get("actual_vs_pred", {}))
+
+
+# ---------------------------------------------------------------------------
+def _render_executive_report(st, bundle, settings) -> None:
+    """경영진 월간 경영 보고: 결론 먼저 → 전월 대비(총량·일평균) → 설비별 탄소 비중 → 감축 검토."""
+
+    frame = (bundle.get("modules_hourly") or {}).get("frame")
+    months = page_logic.available_months(frame)
+    with components.panel(key="exec_report"):
+        head_l, head_r = st.columns([4, 1], vertical_alignment="center")
+        head_l.markdown(
+            components.panel_header("월간 경영 보고", icon_name="chart", desc="학습 원본 실측 · 전월 대비"),
+            unsafe_allow_html=True,
+        )
+        if not months:
+            st.markdown(components.error_state(artifact="hourly_from_full.parquet"), unsafe_allow_html=True)
+            return
+        month = head_r.selectbox("보고 월", months, index=len(months) - 1, key="exec_month",
+                                 label_visibility="collapsed")
+        r = page_logic.executive_monthly(frame, month, settings, module_status=bundle.get("module_status"))
+        cur, ch = r["current"], r["change"]
+
+        def pct(v):
+            return "—" if v is None else f"{v:+.2f}%"
+
+        # 결론 한 줄
+        if ch:
+            verdict = (
+                f"{r['month']} 전력 사용은 전월({r['prev_month']}) 대비 일평균 {pct(ch['daily_pct'])}"
+                f" (총량 {pct(ch['energy_pct'])}, {cur['days']:.0f}일 기준)."
+            )
+        else:
+            verdict = f"{r['month']}은 데이터 첫 달이라 전월 비교가 없습니다."
+        if r["increase_driver"]:
+            verdict += f" 증가 기여 1위: {r['increase_driver']['module']}."
+        st.markdown(f"**{verdict}**")
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.markdown(components.kpi_tile("월 전력량", fmt.fmt_big(cur["energy"]), unit="kWh",
+                    sub=f"일평균 {fmt.fmt_big(cur['daily_energy'])} kWh", compact=True), unsafe_allow_html=True)
+        c2.markdown(components.kpi_tile("월 요금", fmt.fmt_big_split(cur["bill"])[0], unit=fmt.fmt_big_split(cur["bill"])[1] + "원",
+                    sub=fmt.fmt_full(cur["bill"], "bill"), compact=True), unsafe_allow_html=True)
+        c3.markdown(components.kpi_tile("월 탄소", fmt.fmt_big(cur["carbon"]), unit="kgCO₂",
+                    sub=fmt.fmt_full(cur["carbon"], "carbon"), compact=True), unsafe_allow_html=True)
+        c4.markdown(components.kpi_tile("감축 우선 검토", " · ".join(r["reduction_candidates"][:3]) or "—",
+                    sub="탄소 배출 상위 3개 설비", compact=True), unsafe_allow_html=True)
+
+        left, right = st.columns([1.4, 1])
+        with left:
+            st.plotly_chart(
+                charts.module_compare_bar(
+                    [{"module": x["module"], "mean": x["carbon"], "share": x["share"]} for x in r["ranking"]],
+                    set(r["reduction_candidates"]), height=320,
+                ),
+                width="stretch", config=charts.PLOTLY_CONFIG,
+            )
+            st.caption("설비별 월 탄소(kgCO₂)와 비중 · 진한 막대 = 감축 우선 검토 대상")
+        with right:
+            rows = [
+                {"설비": x["module"], "비중": f"{x['share']:.1f}%",
+                 "일평균 증감": pct(x["daily_change_pct"])}
+                for x in r["ranking"]
+            ]
+            st.dataframe(rows, hide_index=True, height=300, width="stretch")
+            if r["watch"]:
+                st.caption("이상 징후 관찰 설비: " + ", ".join(r["watch"]) + " (관찰 기록, 판정 아님)")
+        st.caption("총량 증감에는 달마다 다른 날짜 수가 섞여 있어 사용 수준 변화는 일평균으로 판단합니다. "
+                   "전년 대비는 데이터가 5개월뿐이라 제공하지 않습니다.")
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +208,8 @@ def _render_kpis(st, bundle, ctx, forecast_ok, totals, buckets, unit, profile) -
             delta=page_logic.delta_pct(buckets, "pred_pow", unit) if forecast_ok else None,
         ),
         "bill": components.kpi_tile(
-            "예측 요금", v(fmt.fmt_big, totals["bill"]), unit=config.UNIT_LABELS["bill"],
+            "예측 요금", v(lambda x: fmt.fmt_big_split(x)[0], totals["bill"]),
+            unit=(fmt.fmt_big_split(totals["bill"])[1] if forecast_ok else "") + config.UNIT_LABELS["bill"],
             sub=(fmt.fmt_full(totals["bill"], "bill") if forecast_ok else "") + f" · kWh × {settings['bill_rate']:g}",
             icon_name="wallet", tone="bill",
             chip_text=chip,
@@ -150,8 +224,8 @@ def _render_kpis(st, bundle, ctx, forecast_ok, totals, buckets, unit, profile) -
         ),
         "cost": components.kpi_tile(
             "예상 탄소비용(가정)",
-            fmt.fmt_big(cost) if (forecast_ok and cost is not None) else dash,
-            unit="원" if cost is not None else "",
+            fmt.fmt_big_split(cost)[0] if (forecast_ok and cost is not None) else dash,
+            unit=(fmt.fmt_big_split(cost)[1] + "원") if cost is not None else "",
             sub=(fmt.fmt_full(cost, "bill") + " · tCO₂ × 단가") if (forecast_ok and cost is not None) else "단가 설정 ›",
             icon_name="leaf", disabled=cost is None,
             chip_text="설정값 기준" if cost is not None else "",
@@ -200,16 +274,19 @@ def _render_chart(st, bundle, ctx, rows, profile) -> None:
     avp = bundle["actual_vs_pred"]
     settings = ctx["settings"]
     with components.panel(height=H_MAIN, key=PANEL_CHART):
-        head_l, head_r = st.columns([5, 4], vertical_alignment="center")
+        head_l, head_r = st.columns([3, 6], vertical_alignment="center")
         with head_l:
             st.markdown(
-                components.panel_header(
-                    "시간대별 예측", icon_name="forecast", desc="예측구간 P5–P95 (잠정)"
-                ),
+                components.panel_header("예측", icon_name="forecast", desc="시간대별 · 기간 합계"),
                 unsafe_allow_html=True,
             )
         with head_r:
-            c_metric, c_actual, c_info = st.columns([5, 4, 1], vertical_alignment="center")
+            c_view, c_metric, c_actual, c_info = st.columns([4, 4, 3, 1], vertical_alignment="center")
+            with c_view:
+                view = st.segmented_control(
+                    "보기", options=VIEW_OPTIONS, default=VIEW_OPTIONS[0], key="home_chart_view",
+                    label_visibility="collapsed",
+                ) or VIEW_OPTIONS[0]
             with c_metric:
                 metric_label = st.segmented_control(
                     "지표", options=METRIC_OPTIONS, default=profile["metric"], key=f"home_metric_{ctx['role']}",
@@ -235,6 +312,10 @@ def _render_chart(st, bundle, ctx, rows, profile) -> None:
 
         rate = {"pow": 1.0, "bill": float(settings["bill_rate"]), "carbon": float(settings["carbon_rate"])}[metric]
         unit = ctx["gran"]
+        if view == VIEW_OPTIONS[1]:
+            _render_period_view(st, rows, unit, ctx["start"], ctx["end"], metric, rate)
+            return
+        unit = "시간"  # '시간대별' 보기는 항상 1시간 단위(일/주/월 합계는 '기간 합계' 보기)
         merged = _merge_rows(rows, avp)
         buckets = page_logic.resample_rows(
             merged, unit, ("pred_pow", "pred_low", "pred_high", "actual_pow"),
@@ -319,6 +400,32 @@ def _render_alert_panel(st, alerts: dict[str, Any]) -> None:
             )
         if alerts["interval_count"] > 20:
             st.caption(f"예측구간 이탈 {alerts['interval_count']}시간 중 편차 큰 20건만 표시")
+
+
+def _render_period_view(st, rows, unit, start, end, metric, rate) -> None:
+    """예측 패널의 '기간 합계' 보기 — 일/주 합계를 시간대별과 다른 색으로."""
+
+    shown_unit = "일" if unit in ("시간", "월") else unit  # 예측 기간이 1개월 미만이라 월은 일로
+    buckets = page_logic.resample_rows(rows, shown_unit, ("pred_pow", "pred_carbon"), start=start, end=end)
+    scaled = [{**b, "pred_pow": None if b.get("pred_pow") is None else b["pred_pow"] * rate} for b in buckets]
+    label = {"pow": "전력량", "bill": "요금", "carbon": "탄소"}[metric]
+    fmt_fn = {"pow": fmt.fmt_pow, "bill": fmt.fmt_bill, "carbon": fmt.fmt_carbon}[metric]
+    st.plotly_chart(
+        charts.period_bar_chart(
+            scaled, height=theme.chart_height(H_MAIN, has_caption=True) - 26,
+            color=theme.metric("info"), axis_title=f"{shown_unit}별 예측 {label}({config.UNIT_LABELS[metric]})",
+            fmt_fn=fmt_fn,
+        ),
+        width="stretch", config=charts.PLOTLY_CONFIG,
+    )
+    full = [b["pred_pow"] for b in scaled if not b["partial"] and b.get("pred_pow") is not None]
+    if full:
+        mean = sum(full) / len(full)
+        spread = max(full) - min(full)
+        st.caption(
+            f"{shown_unit} 합계 · y축 확대(0 시작 아님) · 최대-최소 차이 {spread:,.2f} "
+            f"{config.UNIT_LABELS[metric]} ({spread / mean * 100 if mean else 0:.2f}%) · 빈 원 = 부분 구간"
+        )
 
 
 def _render_period_panel(st, rows, unit, start, end, forecast_ok) -> None:

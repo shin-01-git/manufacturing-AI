@@ -182,6 +182,35 @@ def _recent_surge(trend: dict[str, Any]) -> list[tuple[str, float]]:
     return sorted(out, key=lambda x: -x[1])[:3]
 
 
+HOURLY_FULL = "hourly_from_full.parquet"
+
+
+def _pct_s(v: float | None) -> str:
+    return NO_DATA if v is None else f"{v:+.2f}%"
+
+
+def _executive_month(artifacts_dir: Path | None) -> dict[str, Any] | None:
+    """경영진 증감: 대시보드 월간 경영 보고와 같은 계산(page_logic.executive_monthly)을 쓴다."""
+
+    try:
+        import pandas as pd
+
+        from src.app import page_logic
+
+        path = tools_mod.resolve_artifact_path(HOURLY_FULL, artifacts_dir=artifacts_dir)
+        if not path.exists():
+            return None
+        frame = pd.read_parquet(path)
+        hour = pd.to_datetime(frame["hour"])
+        if getattr(hour.dt, "tz", None) is not None:
+            hour = hour.dt.tz_convert("Asia/Seoul").dt.tz_localize(None)
+        frame = frame.assign(hour=hour, hourly_pow=frame["hourly_pow"] / config.WH_PER_KWH)
+        r = page_logic.executive_monthly(frame, None, page_logic.default_settings())
+        return r if r.get("status") == "ok" and r.get("change") else None
+    except Exception:  # noqa: BLE001 - 브리핑은 실패해도 '데이터에 없음'으로 계속
+        return None
+
+
 def build_briefing(
     audience: str = EXECUTIVE,
     start: str | None = None,
@@ -217,7 +246,7 @@ def build_briefing(
         avg_pow = tot_pow / len(rows)
         pow_s = calc.add("예측 전력량 합", fmt.fmt_pow_short(tot_pow), PRED)
         bill_s = calc.add("예측 요금 합", fmt.fmt_krw_short(tot_bill), PRED)
-        carbon_s = calc.add("예측 탄소 합", fmt.fmt_carbon_short(tot_carbon), PRED)
+        carbon_s = calc.add("예측 탄소 합", f"{fmt.fmt_big(tot_carbon)} kgCO₂", PRED)
         avg_s = calc.add("평균 시간당 전력", fmt.fmt_pow_short(avg_pow), PRED)
     else:
         period_label = NO_DATA
@@ -277,22 +306,43 @@ def build_briefing(
                          tone="watch", sources=[AVP_NAME])
 
     if audience == EXECUTIVE:
-        headline = [("예측 요금", bill_s), ("예측 탄소", carbon_s), ("MAE", mae_s)]
+        # 기획서 7(AI 역할 3): 경영진 = 총 비용 · 증감 · 주요 위험, 5줄 이내 + 기준·한계
+        ex = _executive_month(artifacts_dir)
+        if ex:
+            mom_s = calc.add(f"{ex['month']} 일평균 전월 대비", _pct_s(ex["change"]["daily_pct"]), HOURLY_FULL)
+            tot_s = calc.add(f"{ex['month']} 총량 전월 대비", _pct_s(ex["change"]["energy_pct"]), HOURLY_FULL)
+            cand = ex["reduction_candidates"][:3]
+            calc.add("탄소 배출 상위 3", ", ".join(cand), HOURLY_FULL)
+            mom_line = BriefLine(
+                "증감",
+                f"최근 실측 월({ex['month']}) 일평균 사용량은 전월 대비 {mom_s}"
+                + ("로 변화가 거의 없습니다." if abs(ex["change"]["daily_pct"] or 0) < 0.5 else "입니다.")
+                + f" 총량 {tot_s}는 날짜 수 차이({ex['current']['days']:.0f}일)를 포함합니다.",
+                sources=[HOURLY_FULL],
+            )
+            act_text = f"탄소 배출 상위 {cand[0]} 등 {len(cand)}개 설비를 감축 검토 대상으로"
+        else:
+            mom_s = NO_DATA
+            mom_line = BriefLine("증감", NO_DATA, sources=[HOURLY_FULL])
+            act_text = "감축 검토 대상은 데이터에 없음"
+        n_watch = len(watch)
+        headline = [("총 비용", bill_s), ("전월 대비(일평균)", mom_s), ("주의 설비", f"{n_watch}대" if "error" not in status else NO_DATA)]
+        risk = watch_line("주요 위험")
+        if watch:
+            risk = BriefLine("주요 위험", "이상 징후가 반복 관찰되는 설비입니다 (관찰 기록, 설비 판정 아님).",
+                             tone="watch", sources=[STAT], chips=watch_chips)
         lines = [
-            BriefLine("예측 요금", f"{period_label} 공장 전체 예측 요금은 {bill_s}입니다." if f_ok else NO_DATA, sources=[PRED]),
-            BriefLine("예측 탄소", f"예측 탄소배출량은 {carbon_s}(정답 척도)입니다." if f_ok else NO_DATA, sources=[PRED]),
-            BriefLine(
-                "예측 정확도",
-                f"시간당 오차(MAE)는 {mae_s}로, 평균 전력의 {err_s} 수준입니다." if err_s != NO_DATA else
-                (f"시간당 오차(MAE)는 {mae_s}입니다." if mae_s != NO_DATA else NO_DATA),
-                sources=[EVAL, PRED],
-            ),
-            watch_line(),
-            interval_line(),
+            BriefLine("총 비용", f"{period_label} 공장 전체 예측 요금은 {bill_s}, 탄소는 {carbon_s}입니다." if f_ok else NO_DATA, sources=[PRED]),
+            mom_line,
+            risk,
+            BriefLine("우선 조치", act_text + (", 위 이상 징후 설비는 현장 확인을 권합니다." if watch else "합니다."),
+                      tone="watch" if (ex or watch) else "neutral", sources=[HOURLY_FULL, STAT]),
+            BriefLine("기준·한계", "학습 원본(12/1~4/29) 실측과 5월 예측 기준(kWh·원·kgCO₂)이며, 이상은 관찰 기록입니다.",
+                      sources=[PRED, HOURLY_FULL]),
         ]
     elif audience == ENERGY:
         headline = [("예측 전력량", pow_s), ("예측 요금", bill_s), ("예측 탄소", carbon_s)]
-        lines.append(BriefLine("예측 요금·탄소", f"{period_label} 예측 요금은 {bill_s}, 탄소는 {carbon_s}(정답 척도)입니다." if f_ok else NO_DATA, sources=[PRED]))
+        lines.append(BriefLine("예측 요금·탄소", f"{period_label} 예측 요금은 {bill_s}, 탄소는 {carbon_s}입니다." if f_ok else NO_DATA, sources=[PRED]))
         if f_ok:
             peak = max(rows, key=lambda r: float(r["pred_bill"]))
             pd_ = _day(peak["id"])
@@ -385,8 +435,8 @@ def build_briefing(
         "예측은 공장 전체 단위이며 설비별 예측은 아닙니다.",
         "이상 탐지는 학습 원본(12/1~4/29) 기준이며 5월 탐지가 아닙니다.",
     ]
-    if config.UNIT_FOOTNOTE:
-        limits.append("전력량 단위 미확인 — 요금·탄소는 정답 파일과 같은 척도입니다.")
+    if audience != EXECUTIVE:
+        limits.append("전력량은 데이터(Wh) ÷ 1,000 = kWh 기준이며 요금 = kWh × 180원, 탄소 = kWh × 0.424kgCO₂입니다.")
 
     sources_used: list[str] = []
     for ln in lines:

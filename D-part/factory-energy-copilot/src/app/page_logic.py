@@ -933,3 +933,74 @@ def hour_of_day_mean(rows: list[dict[str, Any]], field: str) -> list[float]:
     if not any(cnt):
         return []
     return [acc[h] / cnt[h] if cnt[h] else float("nan") for h in range(24)]
+
+
+# ---------------------------------------------------------------------------
+# 경영진 월간 보고 (팀원 d_queries.executive_summary 로직을 대시보드 artifacts 기준으로 이식)
+# 학습 원본 실측(hourly_from_full, kWh)만 사용. 전월 대비는 총량과 일평균을 함께 낸다
+# (달마다 날짜 수가 달라 총량 증감만 보면 오해가 생김).
+# ---------------------------------------------------------------------------
+def _pct_change(cur: float | None, prev: float | None) -> float | None:
+    if cur is None or prev in (None, 0):
+        return None
+    return (cur - prev) / prev * 100.0
+
+
+def available_months(frame) -> list[str]:
+    if frame is None or len(frame) == 0:
+        return []
+    return sorted(frame["hour"].dt.strftime("%Y-%m").unique().tolist())
+
+
+def executive_monthly(frame, month: str | None, settings: dict[str, Any], *, top: int = 3,
+                      module_status: dict[str, Any] | None = None) -> dict[str, Any]:
+    months = available_months(frame)
+    if not months:
+        return {"status": "empty"}
+    m = month if month in months else months[-1]
+    i = months.index(m)
+    prev_m = months[i - 1] if i > 0 else None
+    key = frame["hour"].dt.strftime("%Y-%m")
+    bill_rate, carbon_rate = float(settings["bill_rate"]), float(settings["carbon_rate"])
+
+    def totals(mm):
+        sub = frame[key == mm]
+        kwh = float(sub["hourly_pow"].sum())
+        days = sub["hour"].nunique() / 24 or 0
+        daily = kwh / days if days else 0.0
+        return sub, {"energy": kwh, "bill": kwh * bill_rate, "carbon": kwh * carbon_rate,
+                     "days": days, "daily_energy": daily}
+
+    cur_sub, cur = totals(m)
+    prev_sub, prev = totals(prev_m) if prev_m else (None, None)
+    change = None
+    if prev:
+        change = {
+            "energy_pct": _pct_change(cur["energy"], prev["energy"]),
+            "daily_pct": _pct_change(cur["daily_energy"], prev["daily_energy"]),
+        }
+    cur_eq = cur_sub.groupby("module")["hourly_pow"].sum().sort_values(ascending=False)
+    prev_eq = prev_sub.groupby("module")["hourly_pow"].sum() if prev_m else None
+    total = float(cur_eq.sum()) or 1.0
+    ranking = []
+    for mod, kwh in cur_eq.items():
+        kwh = float(kwh)
+        d_now = kwh / cur["days"] if cur["days"] else 0.0
+        d_prev = (float(prev_eq[mod]) / prev["days"]) if (prev_eq is not None and mod in prev_eq.index and prev["days"]) else None
+        ranking.append({
+            "module": mod, "kwh": kwh, "carbon": kwh * carbon_rate, "bill": kwh * bill_rate,
+            "share": kwh / total * 100.0,
+            "daily_change_pct": _pct_change(d_now, d_prev),
+            "daily_carbon_change": (d_now - d_prev) * carbon_rate if d_prev is not None else None,
+        })
+    increased = [r for r in ranking if (r["daily_carbon_change"] or 0) > 0]
+    driver = max(increased, key=lambda r: r["daily_carbon_change"]) if increased else None
+    watch = []
+    if module_status and "error" not in module_status:
+        watch = [r["module"] for r in ui_logic.top_anomaly_modules(module_status, limit=top)]
+    return {
+        "status": "ok", "month": m, "prev_month": prev_m, "months": months,
+        "current": cur, "previous": prev, "change": change,
+        "ranking": ranking, "reduction_candidates": [r["module"] for r in ranking[:top]],
+        "increase_driver": driver, "watch": watch,
+    }

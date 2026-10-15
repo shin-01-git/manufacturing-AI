@@ -70,10 +70,12 @@ def test_every_number_in_text_exists_in_calc_table(audience):
 
 
 @needs_real
-def test_executive_mae_has_error_rate_and_not_bare():
+def test_executive_follows_plan_labels():
+    """기획서 7: 경영진 = 총 비용 · 증감 · 주요 위험 (MAE는 에너지 담당자용)."""
     b = bm.build_briefing(bm.EXECUTIVE, "2025-05-10", "2025-05-31", artifacts_dir=REAL)
-    line = next(ln for ln in b.lines if ln.label == "예측 정확도")
-    assert "%" in line.text and "MAE" in line.text
+    assert [ln.label for ln in b.lines] == ["총 비용", "증감", "주요 위험", "우선 조치", "기준·한계"]
+    assert "%" in b.lines[1].text and "정답 척도" not in _all(b)
+    assert "MAE" not in " ".join(ln.text for ln in b.lines)
 
 
 def test_missing_artifacts_give_five_no_data_lines(tmp_path, monkeypatch):
@@ -138,7 +140,7 @@ def test_fmt_short_forms():
     assert fmt.fmt_pow_short(19733651) == "1,973만"
     assert fmt.fmt_pow_short(39130.4) == "39,130"
     assert fmt.fmt_mae(88.18) == "88.2"
-    assert fmt.fmt_period("2025-05-10 00:00:00", "2025-05-31 00:00:00") == "05-10 ~ 05-31 (22일)"
+    assert fmt.fmt_period("2025-05-10 00:00:00", "2025-05-31 00:00:00") == "05-10 ~ 05-31 (21일)"
     assert fmt.fmt_time("2025-05-14 03:00:00") == "05-14 03시"
     assert fmt.fmt_pct(88.2 / 39130, decimals=2) == "0.23%"
     assert fmt.fmt_krw_short(None) == fmt.NO_DATA

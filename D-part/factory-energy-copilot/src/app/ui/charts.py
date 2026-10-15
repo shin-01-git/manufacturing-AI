@@ -533,7 +533,8 @@ def anomaly_vs_typical_bar(hours: list[int], counts: list[int], *, typical: floa
 # v3 charts: period bars, per-module trend, module comparison, load heatmap,
 # anomaly timeline
 # ---------------------------------------------------------------------------
-def period_bar_chart(buckets: list[dict[str, Any]], *, height: int = 220):
+def period_bar_chart(buckets: list[dict[str, Any]], *, height: int = 220, color: str | None = None,
+                     axis_title: str = "전력량(kWh)", fmt_fn=None):
     """일/주 예측 전력량 점+선 차트 (이름은 호환을 위해 유지).
 
     일별 합계 차이가 작아 0부터 시작하는 막대는 모두 같아 보인다. 막대 y축을 자르면
@@ -555,11 +556,13 @@ def period_bar_chart(buckets: list[dict[str, Any]], *, height: int = 220):
     lo, hi = rng
     part = [b for b in buckets if b["partial"] and b not in full and b.get("pred_pow") is not None and lo <= b["pred_pow"] <= hi]
 
-    def _cd(bs):
-        return [[fmt.fmt_pow(b.get("pred_pow")), fmt.fmt_carbon(b.get("pred_carbon")), b["n"]] for b in bs]
+    ff = fmt_fn or fmt.fmt_pow
 
-    hover = "%{x}<br>전력량 %{customdata[0]}<br>탄소 %{customdata[1]}<br>%{customdata[2]}시간<extra></extra>"
-    accent = theme.COLOR["accent"]
+    def _cd(bs):
+        return [[ff(b.get("pred_pow")), b["n"]] for b in bs]
+
+    hover = "%{x}<br>예측 %{customdata[0]}<br>%{customdata[1]}시간 합계<extra></extra>"
+    accent = color or theme.COLOR["accent"]
     ys = [b["pred_pow"] for b in full]
     mean = sum(ys) / len(ys)
     fig = go.Figure()
@@ -576,21 +579,21 @@ def period_bar_chart(buckets: list[dict[str, Any]], *, height: int = 220):
         ))
     fig.add_hline(
         y=mean, line=dict(color=theme.COLOR["muted"], width=1, dash="dot"),
-        annotation_text=f"평균 {fmt.fmt_pow(mean)}", annotation_position="top left",
+        annotation_text=f"평균 {ff(mean)}", annotation_position="top left",
         annotation_font=dict(size=11, color=theme.COLOR["muted"]),
     )
     imax = max(range(len(full)), key=lambda k: ys[k])
     imin = min(range(len(full)), key=lambda k: ys[k])
     for k, pos in ((imax, "top center"), (imin, "bottom center")):
         fig.add_trace(go.Scatter(
-            x=[full[k]["label"]], y=[ys[k]], mode="text", text=[fmt.fmt_pow(ys[k])],
+            x=[full[k]["label"]], y=[ys[k]], mode="text", text=[ff(ys[k])],
             textposition=pos, textfont=dict(size=11, color=theme.COLOR["text"]),
             hoverinfo="skip", showlegend=False,
         ))
     order = [b["label"] for b in sorted(full + part, key=lambda b: b["key"])]
     fig.update_layout(
         template=_TPL, height=height, showlegend=False,
-        yaxis=dict(title="전력량(kWh)", range=[lo, hi]),
+        yaxis=dict(title=axis_title, range=[lo, hi]),
         xaxis=dict(title="", type="category", categoryorder="array", categoryarray=order),
     )
     return fig
@@ -637,10 +640,10 @@ def module_compare_bar(items: list[dict[str, Any]], selected: set[str], *, heigh
     import math
 
     peak = max(r["mean"] for r in items) or 1.0
-    # 막대가 끝까지 차지 않도록 측정 최대값보다 큰 '보기 좋은' 축 최대값(최대×1.25를 올림)
-    raw = peak * 1.25
-    step = 10 ** max(0, int(math.floor(math.log10(raw))) - 1)
-    axis_max = math.ceil(raw / step) * step
+    # 막대가 끝까지 차지 않도록 축 최대값 = 최대×2.5 이상인 1·2·5·10 계열 값 (예: 3 → 10)
+    raw = peak * 2.5
+    mag = 10 ** math.floor(math.log10(raw))
+    axis_max = next(m * mag for m in (1, 2, 5, 10) if m * mag >= raw)
     fig = go.Figure(
         go.Bar(
             x=[r["mean"] for r in ordered],
