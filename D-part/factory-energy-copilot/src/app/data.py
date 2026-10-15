@@ -139,6 +139,12 @@ def load_bundle(artifacts_dir: Path | None = None) -> dict[str, Any]:
     bundle["selection"] = _load_json(SELECTION_NAME, artifacts_dir)
     bundle["source_meta"] = _load_json("source_meta.json", artifacts_dir)
     bundle["aggregate_run"] = _load_json("aggregate_run.json", artifacts_dir)
+    # 탐지 시간대 패널(3-뷰)이 쓰는 anomaly_hourly DataFrame. trend(dict, points 리스트)는
+    # 기존 ui_logic.heatmap_matrix/charts.anomaly_timeline/page_logic.timeline_points가
+    # 여전히 쓰므로 그대로 둔다 — 이 키는 그 옆에 추가되는 별도 DataFrame 뷰다.
+    bundle["anomaly_hourly_frame"] = _load_parquet_frame(
+        tools_mod.ANOMALY_HOURLY_NAME, artifacts_dir
+    )
     # 6.5만 건 이벤트를 매 rerun마다 훑지 않도록 기간은 로드 시 한 번만 계산한다.
     bundle["events_period"] = ui_logic.events_period(bundle["events"])
     return bundle

@@ -1,18 +1,24 @@
 """이상 탐지 페이지 (v2 §5, facility 기본).
 
-요약 카드 3개 → 설비 상태표(행 선택)+히트맵 → 방법 비교 2표+이벤트 로그 → 행 선택
-드릴다운(헤더 + '관찰 기록일 뿐 설비 판정이 아님' → 전압/역률 3상 동기 차트 또는
-anomaly_events 점 그래프 대체 → 세 구획: 관찰 사실/원인 후보/현장 확인 → 시간당
-이상 vs 평소). status는 STATUS_THRESHOLDS_APPROVED=False면 전부 '미확정' (O-3).
+요약 카드 3개 → 설비 상태표(행 선택)+탐지 시간대(3-뷰 클릭 드릴다운) → 방법 비교
+2표+이벤트 로그 → 행 선택 드릴다운(헤더 + '관찰 기록일 뿐 설비 판정이 아님' →
+전압/역률 3상 동기 차트 또는 anomaly_events 점 그래프 대체 → 세 구획: 관찰 사실/
+원인 후보/현장 확인 → 시간당 이상 vs 평소). status는 STATUS_THRESHOLDS_APPROVED=
+False면 전부 '미확정' (O-3).
 
 모든 정보 덩어리(KPI 제외)는 st.container(border=True, height=H) 패널 안에 두고
 제목은 panel_header로 둔다 (§A-8). 상태표 행 선택은 st.dataframe의 on_select로,
 module명은 artifacts 값 그대로. 설비 상세 드릴다운은 연속 시계열 미포함 환경이라
 anomaly_events 점(scatter)만 그리는 (b) 방식이다 (anomaly_context 미존재).
+
+탐지 시간대 패널(PANEL_HEATMAP)은 anomaly_hourly_frame(pandas DataFrame, bundle)
+기반 3-뷰(일별 추이/시간대 패턴/일자 상세) 클릭 드릴다운이다. 유형 칩(raw_type)은
+위쪽 페이지 레벨 필터를 그대로 받아 쓰고 이 패널 안에서 새로 만들지 않는다.
 """
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 from config import config
@@ -33,6 +39,14 @@ ROW_MID_H = 330
 ROW_LOW_H = 420
 ROW_BOTTOM_H = 270
 
+# 탐지 시간대 패널 (§2) 세션 키 — 바/셀 클릭 드릴다운이 공유하는 상태.
+TL_VIEWS = ["일별 추이", "시간대 패턴", "일자 상세"]
+TL_VIEW_KEY = "tl_view"
+TL_MODULE_KEY = "tl_module"
+TL_DAY_KEY = "tl_day"
+TL_DAY_INPUT_KEY = "tl_day_input"
+TL_HOUR_KEY = "tl_hour"
+
 
 def render(
     status: dict[str, Any],
@@ -45,6 +59,7 @@ def render(
     artifacts_dir=None,
     settings: dict[str, Any] | None = None,
     role: str = config.DEFAULT_ROLE,
+    hourly_frame: dict[str, Any] | None = None,
 ) -> None:
     import streamlit as st
 
@@ -100,12 +115,15 @@ def render(
 
     _render_summary(st, status, model)
 
+    merged_settings = page_logic.merged_settings(settings)
     status_col, heat_col = st.columns([1.65, 1])
     selected = None
     with status_col:
         selected = _render_status_table(st, model, trend)
     with heat_col:
-        _render_heatmap(st, trend, date_range)
+        _render_detection_timeline(
+            st, hourly_frame or {}, raw_type, date_range, merged_settings, artifacts_dir
+        )
 
     # 경영진 view: summary only (KPI + 상태표 + 타임라인); detail panels are for the
     # facility / energy roles.
@@ -249,7 +267,40 @@ def _render_status_table(st, model: dict[str, Any], trend: dict[str, Any]) -> st
         return selected_module
 
 
-def _render_heatmap(st, trend: dict[str, Any], date_range=None) -> None:
+def _tl_type_labels(raw_type: str | None) -> dict[str, str]:
+    """Type-label map for chart hovers; limited to the active filter (or all known)."""
+
+    if raw_type:
+        return {raw_type: page_logic.type_label(raw_type)}
+    return dict(config.ANOMALY_TYPE_LABELS)
+
+
+def _tl_goto_detail(st, module: str, day: Any) -> None:
+    """Click-drilldown entry: jump §2.1/§2.2 -> §2.3 with the clicked (day, module)."""
+
+    st.session_state[TL_MODULE_KEY] = module
+    st.session_state[TL_DAY_KEY] = str(day)
+    st.session_state[TL_VIEW_KEY] = "일자 상세"
+    st.session_state.pop(TL_HOUR_KEY, None)
+    st.rerun()
+
+
+def _render_detection_timeline(
+    st,
+    hourly_frame: dict[str, Any],
+    raw_type: str | None,
+    date_range: tuple[str | None, str | None] | None,
+    settings: dict[str, Any],
+    artifacts_dir=None,
+) -> None:
+    """탐지 시간대 패널 (§2): 일별 추이 / 시간대 패턴 / 일자 상세, 3-뷰 클릭 드릴다운.
+
+    ``hourly_frame`` is ``bundle["anomaly_hourly_frame"]`` (``{"frame": DataFrame}``
+    or an error dict). ``raw_type`` is the page-level type-chip filter (shared,
+    not a new widget here per the plan). ``settings`` carries
+    ``anomaly_surge_factor`` / ``night_start`` / ``night_end`` (merged defaults).
+    """
+
     with components.panel(height=ROW_MID_H, key=PANEL_HEATMAP):
         head_l, head_r = st.columns([3, 2], vertical_alignment="center")
         with head_l:
@@ -258,32 +309,230 @@ def _render_heatmap(st, trend: dict[str, Any], date_range=None) -> None:
                 unsafe_allow_html=True,
             )
         with head_r:
-            mode = st.segmented_control(
-                "보기", options=["타임라인", "히트맵"], default="타임라인",
-                key="an_view", label_visibility="collapsed",
-            ) or "타임라인"
-        h = theme.chart_height(ROW_MID_H)
-        if mode == "타임라인":
-            start, end = date_range if date_range else (None, None)
-            points = page_logic.timeline_points(trend, start=start, end=end)
-            if not points:
-                st.markdown(components.empty_state("선택 조건의 탐지 없음"), unsafe_allow_html=True)
-                return
-            labels = {o["type"]: o["label"] for o in page_logic.anomaly_type_options(
-                {"events": [{"type": p["type"]} for p in points]})}
-            st.plotly_chart(
-                charts.anomaly_timeline(points, labels, height=h),
-                width="stretch", config=charts.PLOTLY_CONFIG,
+            view = st.segmented_control(
+                "뷰", options=TL_VIEWS, default=TL_VIEWS[0],
+                key=TL_VIEW_KEY, label_visibility="collapsed",
+            ) or TL_VIEWS[0]
+
+        if "error" in hourly_frame or "frame" not in hourly_frame:
+            st.markdown(
+                components.empty_state(tools_mod.ANOMALY_HOURLY_NAME), unsafe_allow_html=True
             )
             return
-        hm = ui_logic.heatmap_matrix(trend)
-        if not hm["modules"]:
+        trend = hourly_frame["frame"]
+        start, end = date_range if date_range else (None, None)
+        scoped = page_logic.slice_trend(trend, None, raw_type, start, end)
+
+        all_modules = sorted(trend["module"].unique()) if len(trend) else []
+        modules = page_logic.active_modules(scoped)
+        dropped = max(len(all_modules) - len(modules), 0)
+        if not modules:
             st.markdown(components.empty_state("선택 조건의 탐지 없음"), unsafe_allow_html=True)
             return
-        st.plotly_chart(
-            charts.heatmap(hm["modules"], hm["days"], hm["matrix"], height=h),
-            width="stretch", config=charts.PLOTLY_CONFIG,
+
+        module = st.selectbox(
+            "설비", options=modules, key=TL_MODULE_KEY, label_visibility="collapsed",
         )
+        if dropped:
+            st.caption(f"기록 없는 설비 {dropped}대는 표시하지 않음")
+
+        _render_tl_chips(st, scoped, module, settings)
+
+        h = theme.chart_height(ROW_MID_H, has_caption=bool(dropped))
+        if view == "일별 추이":
+            _render_tl_daily(st, scoped, modules, raw_type, settings, h)
+        elif view == "시간대 패턴":
+            _render_tl_heatmap(st, scoped, module, settings, h)
+        else:
+            _render_tl_day_detail(st, scoped, module, raw_type, h, artifacts_dir)
+
+
+def _render_tl_chips(st, scoped, module: str, settings: dict[str, Any]) -> None:
+    """§4 요약 칩 3개: 발생 시간 비율 / 일평균 N건 / 급증일 K일."""
+
+    ratio = page_logic.occurrence_hour_ratio(scoped, module)
+    daily = page_logic.daily_counts(scoped, [module])
+    avg = float(daily["count"].mean()) if len(daily) else 0.0
+    factor = float(settings.get("anomaly_surge_factor", config.DEFAULT_ANOMALY_SURGE_FACTOR))
+    surges = page_logic.surge_days(daily, factor)
+
+    ratio_text = fmt.fmt_ratio_pct(ratio)
+    if ratio > 0.9:
+        # 90% 초과 = "상시 발생" — 단정적 판정 문구 금지(C4 금칙어), 완곡 표현만 사용.
+        ratio_caption = f"{ratio_text} · 상시 발생 — 기준값·운전 조건 확인 필요"
+    else:
+        ratio_caption = f"{ratio_text} 가능성 — 시간대 패턴 참고"
+
+    c1, c2, c3 = st.columns(3)
+    c1.markdown(
+        components.chip(f"발생 시간 비율 {ratio_caption}", tone="anomaly"), unsafe_allow_html=True
+    )
+    c2.markdown(
+        components.chip(f"일평균 {fmt.fmt_count_per_day(avg)}", tone="muted"), unsafe_allow_html=True
+    )
+    c3.markdown(
+        components.chip(f"급증일 {fmt.fmt_count(len(surges))}일", tone="watch"), unsafe_allow_html=True
+    )
+
+
+def _render_tl_daily(st, scoped, modules: list[str], raw_type, settings, height: int) -> None:
+    factor = float(settings.get("anomaly_surge_factor", config.DEFAULT_ANOMALY_SURGE_FACTOR))
+    daily = page_logic.daily_counts(scoped, modules, raw_type)
+    surges = page_logic.surge_days(daily, factor)
+    if len(daily) == 0:
+        st.markdown(components.empty_state("선택 조건의 탐지 없음"), unsafe_allow_html=True)
+        return
+    fig = charts.anomaly_daily_small_multiples(
+        daily, surges,
+        modules=modules, surge_factor=factor,
+        accent_color=theme.COLOR["accent"], alert_color=theme.COLOR["alert"],
+        muted_color=theme.COLOR["muted"], type_labels=_tl_type_labels(raw_type),
+        height=height,
+    )
+    selection = st.plotly_chart(
+        fig, width="stretch", config=charts.PLOTLY_CONFIG,
+        on_select="rerun", selection_mode="points", key="tl_daily",
+    )
+    points = _plotly_selected_points(selection)
+    if points:
+        custom = points[0].get("customdata") or []
+        if len(custom) >= 3:
+            _tl_goto_detail(st, custom[2], custom[1])
+
+
+def _render_tl_heatmap(st, scoped, module: str, settings, height: int) -> None:
+    matrix = page_logic.hour_by_day_matrix(
+        scoped, module, weekly_if_days_over=60,
+    )
+    if not matrix["cols"]:
+        st.markdown(components.empty_state("선택 조건의 탐지 없음"), unsafe_allow_html=True)
+        return
+    if matrix["unit"] == "주":
+        st.caption("주 단위로 묶어 표시")
+    night = page_logic.night_hours(settings)
+    fig = charts.anomaly_hour_heatmap_with_sidebar(
+        matrix, night_hours=night, accent_color=theme.COLOR["accent"],
+        low_color=theme.token("heat_low"), faint_color=theme.token("faint"), height=height,
+    )
+    selection = st.plotly_chart(
+        fig, width="stretch", config=charts.PLOTLY_CONFIG,
+        on_select="rerun", selection_mode="points", key="tl_hour_heat",
+    )
+    points = _plotly_selected_points(selection)
+    if points:
+        custom = points[0].get("customdata")
+        day_iso = custom if isinstance(custom, str) else (custom[0] if custom else None)
+        if day_iso:
+            from datetime import date as _date
+
+            day = _date.fromisoformat(day_iso)
+            if matrix["unit"] == "주":
+                day = day - timedelta(days=day.weekday())  # 월요일로 매핑 (설계 결정 3)
+            _tl_goto_detail(st, module, day)
+
+
+def _render_tl_day_detail(st, scoped, module: str, raw_type, height: int, artifacts_dir=None) -> None:
+    from datetime import date as _date, datetime as _datetime
+
+    all_days = sorted(scoped[scoped["module"] == module]["hour"].dt.date.unique())
+    if not all_days:
+        st.markdown(components.empty_state("선택 조건의 탐지 없음"), unsafe_allow_html=True)
+        return
+
+    stored_day = st.session_state.get(TL_DAY_KEY)
+    try:
+        current_day = _date.fromisoformat(str(stored_day)[:10]) if stored_day else all_days[-1]
+    except ValueError:
+        current_day = all_days[-1]
+    if current_day not in all_days:
+        current_day = min(all_days, key=lambda d: abs((d - current_day).days))
+
+    nav_prev, nav_date, nav_next, nav_label = st.columns([1, 2, 1, 3], vertical_alignment="center")
+    idx = all_days.index(current_day)
+    with nav_prev:
+        if st.button("◀ 이전 날", key="tl_prev_day", disabled=idx <= 0, width="stretch"):
+            current_day = all_days[idx - 1]
+            st.session_state[TL_DAY_KEY] = str(current_day)
+            st.session_state.pop(TL_HOUR_KEY, None)
+            st.rerun()
+    with nav_date:
+        picked = st.date_input(
+            "날짜", value=current_day, min_value=all_days[0], max_value=all_days[-1],
+            key=TL_DAY_INPUT_KEY, label_visibility="collapsed",
+        )
+        if picked != current_day:
+            current_day = picked
+            st.session_state[TL_DAY_KEY] = str(current_day)
+            st.session_state.pop(TL_HOUR_KEY, None)
+            st.rerun()
+    with nav_next:
+        if st.button("다음 날 ▶", key="tl_next_day", disabled=idx >= len(all_days) - 1, width="stretch"):
+            current_day = all_days[idx + 1]
+            st.session_state[TL_DAY_KEY] = str(current_day)
+            st.session_state.pop(TL_HOUR_KEY, None)
+            st.rerun()
+
+    profile = page_logic.day_hour_profile(scoped, module, current_day)
+    usual = page_logic.usual_hour_profile(scoped, module)
+    day_total = sum(p["count"] for p in profile)
+    usual_total = sum(usual)
+    with nav_label:
+        st.caption(f"{module} · 그날 {fmt.fmt_count_per_day(day_total)} / 평소 {fmt.fmt_count_per_day(usual_total)}")
+
+    type_colors = {
+        "voltage_low_3phase": theme.phase("r"),
+        "power_factor_low_3phase": theme.phase("s"),
+    }
+    fig = charts.anomaly_24h_stacked_bar(
+        profile, usual, type_colors=type_colors, type_labels=_tl_type_labels(raw_type),
+        muted_color=theme.COLOR["muted"], height=max(height - 60, 160),
+    )
+    selection = st.plotly_chart(
+        fig, width="stretch", config=charts.PLOTLY_CONFIG,
+        on_select="rerun", selection_mode="points", key="tl_hourbar",
+    )
+    points = _plotly_selected_points(selection)
+    clicked_hour = int(points[0]["x"]) if points and "x" in points[0] else None
+    if clicked_hour is not None:
+        st.session_state[TL_HOUR_KEY] = clicked_hour
+
+    hour = st.session_state.get(TL_HOUR_KEY)
+    day_events = tools_mod.get_anomaly_events(
+        module,
+        start=_datetime.combine(current_day, _datetime.min.time()),
+        end=_datetime.combine(current_day, _datetime.min.time()) + timedelta(hours=23, minutes=59, seconds=59),
+        artifacts_dir=artifacts_dir,
+    )
+    if "error" not in day_events and raw_type:
+        day_events = page_logic.filter_events_by_type(day_events, raw_type)
+    if "error" not in day_events and hour is not None:
+        day_events = page_logic.filter_events_by_hour(day_events, hour)
+
+    rows = []
+    for ev in (day_events.get("events", []) if "error" not in day_events else [])[:200]:
+        rows.append(
+            {
+                "시각(초)": fmt.fmt_time_full(ev["localtime"]),
+                "유형": page_logic.type_label(ev["type"]),
+                "값": fmt.fmt_mae(ev["value"]),
+                "정상범위": ev.get("normal_range", ""),
+                "탐지 방법": _detected_by_glyph(ev.get("detected_by", "")),
+                "점수": fmt.fmt_mae(ev.get("score")),
+            }
+        )
+    if rows:
+        st.dataframe(rows, width="stretch", hide_index=True, height=160)
+    else:
+        st.caption("시간대를 클릭하면 그 시간의 이벤트가 표에 표시됩니다." if hour is None else "선택 시간대 이벤트 없음")
+
+
+def _plotly_selected_points(selection) -> list[dict[str, Any]]:
+    """Normalise ``st.plotly_chart(on_select='rerun')`` return value -> points list."""
+
+    if isinstance(selection, dict):
+        return selection.get("selection", {}).get("points", []) or []
+    sel = getattr(selection, "selection", None)
+    return list(getattr(sel, "points", []) or [])
 
 
 def _render_method_comparison(st, rebuild_meta: dict[str, Any] | None) -> None:

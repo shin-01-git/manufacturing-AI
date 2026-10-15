@@ -214,3 +214,33 @@ def fmt_time(value: Any) -> str:
         except ValueError:
             return NO_DATA
     return f"{moment:%m-%d %H}시"
+
+
+def fmt_count_per_day(value: Any) -> str:
+    """Format a daily-average count as a rounded integer + '건': ``312.4 -> "312건"``.
+
+    Used by the 탐지 시간대 panel's '일평균 N건' chip (§4) and the per-module row
+    label in the §2.1 small-multiples chart — the one place a non-integer
+    (an average) still needs the exact-count '건' suffix.
+    """
+
+    if not _is_number(value):
+        return NO_DATA
+    return f"{int(round(float(value))):,d}건"
+
+
+def fmt_time_full(value: Any) -> str:
+    """``2025-05-14 03:00:12`` (or ISO ``T``) -> ``03:00:12`` (§2.3 event table).
+
+    Unlike ``fmt_time`` this keeps seconds and drops the date — the 일자 상세
+    event table already shows one fixed day, so only the time-of-day matters.
+    """
+
+    from datetime import datetime
+
+    text = str(value).replace("T", " ")[:19]
+    try:
+        moment = datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return NO_DATA
+    return f"{moment:%H:%M:%S}"

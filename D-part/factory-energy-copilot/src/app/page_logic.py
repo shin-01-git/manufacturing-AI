@@ -557,6 +557,227 @@ def filter_trend_by_type(trend: dict[str, Any], raw_type: str | None) -> dict[st
     return {**trend, "points": pts, "count": len(pts)}
 
 
+def filter_events_by_hour(events: dict[str, Any], hour: int | None) -> dict[str, Any]:
+    """Keep events whose ``localtime`` hour-of-day matches ``hour`` (§2.3 drilldown).
+
+    Same shape as ``filter_events_by_type``. The caller already narrowed
+    ``events`` to one module/day; this only narrows by hour-of-day.
+    """
+
+    if "error" in events or hour is None:
+        return events
+    rows = [ev for ev in events.get("events", []) if _hour_of_localtime(ev.get("localtime")) == hour]
+    return {**events, "events": rows, "count": len(rows)}
+
+
+def _hour_of_localtime(value: Any) -> int | None:
+    """Extract hour-of-day (0..23) from a loose ``localtime`` timestamp string."""
+
+    text = str(value or "").strip()
+    for sep in (" ", "T"):
+        if sep in text:
+            rest = text.split(sep, 1)[1]
+            if rest[:2].isdigit():
+                return int(rest[:2])
+    return None
+
+
+# ---------------------------------------------------------------------------
+# 탐지 시간대 패널 (3-뷰) — anomaly_hourly_frame(pandas DataFrame) 순수 집계
+# ``trend`` 인자는 bundle["anomaly_hourly_frame"]["frame"] (columns: hour(tz-naive
+# KST datetime), module, type, count). 모두 pandas 벡터 연산만 쓰고, 65k행을 매
+# rerun마다 python for-loop로 다시 훑지 않는다.
+# ---------------------------------------------------------------------------
+def slice_trend(trend, modules=None, raw_type: str | None = None, start: Any = None, end: Any = None):
+    """Filter the anomaly_hourly DataFrame by module(s)/type/date range (shared helper).
+
+    Used by every aggregation function below and by the tab to pre-scope the
+    frame before computing ``active_modules`` — keeps the module/type/date
+    filtering logic in one place instead of duplicating it per caller.
+    """
+
+    sub = trend
+    if modules is not None:
+        sub = sub[sub["module"].isin(modules)]
+    if raw_type:
+        sub = sub[sub["type"] == raw_type]
+    s, e = to_date(start), to_date(end)
+    if s is not None:
+        sub = sub[sub["hour"] >= datetime.combine(s, datetime.min.time())]
+    if e is not None:
+        sub = sub[sub["hour"] < datetime.combine(e + timedelta(days=1), datetime.min.time())]
+    return sub
+
+
+def daily_counts(
+    trend, modules: list[str] | None, raw_type: str | None = None, start: Any = None, end: Any = None
+):
+    """Daily (module, day) anomaly sums + per-type breakdown (§2.1 bars).
+
+    Returns a DataFrame with columns ``module, day, count, by_type`` where
+    ``by_type`` is a ``{type: count}`` dict for that module/day. ``modules=None``
+    keeps every module.
+    """
+
+    import pandas as pd
+
+    cols = ["module", "day", "count", "by_type"]
+    if trend is None or len(trend) == 0:
+        return pd.DataFrame(columns=cols)
+    sub = slice_trend(trend, modules, raw_type, start, end)
+    if len(sub) == 0:
+        return pd.DataFrame(columns=cols)
+    sub = sub.assign(day=sub["hour"].dt.floor("D").dt.date)
+    daily = sub.groupby(["module", "day"], as_index=False)["count"].sum()
+    type_sum = sub.groupby(["module", "day", "type"])["count"].sum()
+    by_type_map: dict[tuple[Any, Any], dict[str, int]] = {}
+    for (mod, day, etype), cnt in type_sum.items():
+        by_type_map.setdefault((mod, day), {})[etype] = int(cnt)
+    daily["by_type"] = [by_type_map.get((r.module, r.day), {}) for r in daily.itertuples()]
+    return daily.sort_values(["module", "day"]).reset_index(drop=True)
+
+
+def surge_days(daily, factor: float):
+    """Days where a module's count >= its daily median × ``factor`` (§2.1 ▲).
+
+    Modules whose daily-count median is 0 have no surge days (division-by-zero
+    guard; a module with mostly-zero history should not flag every nonzero day).
+    """
+
+    import pandas as pd
+
+    cols = ["module", "day", "count"]
+    if daily is None or len(daily) == 0:
+        return pd.DataFrame(columns=cols)
+    out = daily.copy()
+    out["_median"] = out.groupby("module")["count"].transform("median")
+    hits = out[(out["_median"] > 0) & (out["count"] >= out["_median"] * float(factor))]
+    return hits[cols].reset_index(drop=True)
+
+
+def hour_by_day_matrix(
+    trend,
+    module: str,
+    raw_type: str | None = None,
+    start: Any = None,
+    end: Any = None,
+    weekly_if_days_over: int = 60,
+) -> dict[str, Any]:
+    """0..23h × date(or ISO-week) count matrix for one module (§2.2 heatmap).
+
+    Returns ``{'rows': [0..23], 'cols': [date,...], 'matrix': [[int]], 'unit':
+    '일'|'주', 'p95': int}``. Switches to weekly columns (Monday-keyed) when the
+    filtered period spans more than ``weekly_if_days_over`` days; narrowing the
+    header date filter below that threshold auto-returns to daily columns. p95
+    is computed over the full matrix (0s included, design decision §2).
+    """
+
+    import pandas as pd
+
+    empty = {"rows": list(range(24)), "cols": [], "matrix": [], "unit": "일", "p95": 0}
+    if trend is None or len(trend) == 0:
+        return empty
+    sub = slice_trend(trend, [module], raw_type, start, end)
+    if len(sub) == 0:
+        return empty
+
+    days_span = (sub["hour"].max().date() - sub["hour"].min().date()).days + 1
+    unit = "주" if days_span > weekly_if_days_over else "일"
+    if unit == "주":
+        col_key = (sub["hour"].dt.floor("D") - pd.to_timedelta(sub["hour"].dt.weekday, unit="D")).dt.date
+    else:
+        col_key = sub["hour"].dt.date
+    hour_of_day = sub["hour"].dt.hour
+
+    grouped = sub.assign(_col=col_key, _hr=hour_of_day).groupby(["_hr", "_col"])["count"].sum()
+    cols = sorted(col_key.unique())
+    rows = list(range(24))
+    pivot = grouped.unstack(fill_value=0).reindex(index=rows, columns=cols, fill_value=0)
+    matrix = [[int(v) for v in row] for row in pivot.to_numpy()]
+    flat = pivot.to_numpy().flatten()
+    p95 = int(round(float(pd.Series(flat).quantile(0.95)))) if flat.size else 0
+    return {"rows": rows, "cols": cols, "matrix": matrix, "unit": unit, "p95": p95}
+
+
+def day_hour_profile(trend, module: str, day: Any) -> list[dict[str, Any]]:
+    """0..23h per-type counts for one module/day, zero-filled (§2.3 24h bars)."""
+
+    d = to_date(day)
+    empty = [{"hour": h, "count": 0, "by_type": {}} for h in range(24)]
+    if trend is None or len(trend) == 0 or d is None:
+        return empty
+    sub = trend[trend["module"] == module]
+    start_dt = datetime.combine(d, datetime.min.time())
+    end_dt = start_dt + timedelta(days=1)
+    sub = sub[(sub["hour"] >= start_dt) & (sub["hour"] < end_dt)]
+    if len(sub) == 0:
+        return empty
+    sub = sub.assign(_hr=sub["hour"].dt.hour)
+    totals = sub.groupby("_hr")["count"].sum()
+    type_sum = sub.groupby(["_hr", "type"])["count"].sum()
+    out = []
+    for h in range(24):
+        by_type = {}
+        if h in type_sum.index.get_level_values(0):
+            by_type = {t: int(c) for t, c in type_sum.loc[h].items()}
+        out.append({"hour": h, "count": int(totals.get(h, 0)), "by_type": by_type})
+    return out
+
+
+def usual_hour_profile(trend, module: str) -> list[float]:
+    """Per-hour average count across every observed day for one module (§2.3 dotted line).
+
+    Average = Σ count at hour h ÷ number of distinct days the module has any
+    record (not ÷ number of days with data at hour h specifically), so the
+    "usual" line reflects the whole period, not just the active subset.
+    """
+
+    if trend is None or len(trend) == 0:
+        return [0.0] * 24
+    sub = trend[trend["module"] == module]
+    if len(sub) == 0:
+        return [0.0] * 24
+    day_count = sub["hour"].dt.date.nunique() or 1
+    sub = sub.assign(_hr=sub["hour"].dt.hour)
+    totals = sub.groupby("_hr")["count"].sum()
+    return [float(totals.get(h, 0)) / day_count for h in range(24)]
+
+
+def occurrence_hour_ratio(trend, module: str) -> float:
+    """Active hour-slots ÷ total observed hour-slots for one module (§4 chip 1).
+
+    Shared definition reused by ``active_modules`` for its descending sort
+    (design decision — ``module_status.anomaly_ratio`` denominator is not in
+    ``trend``, so this occurrence-hour ratio is the one consistent "ratio" the
+    panel can compute from ``anomaly_hourly`` alone).
+    """
+
+    if trend is None or len(trend) == 0:
+        return 0.0
+    sub = trend[trend["module"] == module]
+    if len(sub) == 0:
+        return 0.0
+    active_hours = sub["hour"].nunique()
+    span_start, span_end = sub["hour"].min(), sub["hour"].max()
+    total_hours = int((span_end - span_start).total_seconds() // 3600) + 1
+    if total_hours <= 0:
+        return 0.0
+    return active_hours / total_hours
+
+
+def active_modules(trend) -> list[str]:
+    """Modules with count sum > 0, sorted by occurrence-hour ratio descending (§2 header)."""
+
+    if trend is None or len(trend) == 0:
+        return []
+    totals = trend.groupby("module")["count"].sum()
+    modules = [m for m, v in totals.items() if v > 0]
+    if not modules:
+        return []
+    ratios = {m: occurrence_hour_ratio(trend, m) for m in modules}
+    return sorted(modules, key=lambda m: -ratios[m])
+
+
 def timeline_points(
     trend: dict[str, Any], *, start: Any = None, end: Any = None
 ) -> list[dict[str, Any]]:

@@ -261,6 +261,7 @@ def main() -> None:
             date_range=(ctx["start"], ctx["end"]),
             settings=settings,
             role=role,
+            hourly_frame=bundle.get("anomaly_hourly_frame"),
         )
     elif page == page_logic.PAGE_COPILOT:
         copilot_tab.render(agent_mod.Agent(), {"role": role, "start": ctx["start"], "end": ctx["end"]})

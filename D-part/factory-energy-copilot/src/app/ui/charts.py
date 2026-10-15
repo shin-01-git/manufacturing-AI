@@ -629,6 +629,248 @@ def load_pattern_heatmap(pattern: dict[str, Any], night: list[int], *, height: i
     return fig
 
 
+_WEEKDAY_KR = ("월", "화", "수", "목", "금", "토", "일")
+
+
+def _axis_ref(index: int, axis: str) -> str:
+    """``'x'``/``'y'`` domain ref for subplot ``index`` (1-based): ``'x'``/``'x2'``..."""
+
+    return axis if index == 1 else f"{axis}{index}"
+
+
+def _by_type_text(by_type: dict[str, Any], type_labels: dict[str, str] | None) -> str:
+    labels = type_labels or {}
+    parts = [f"{labels.get(t, t)} {int(c)}" for t, c in sorted(by_type.items(), key=lambda kv: -kv[1])]
+    return " / ".join(parts)
+
+
+def anomaly_daily_small_multiples(
+    daily,
+    surge,
+    *,
+    modules: list[str],
+    surge_factor: float,
+    accent_color: str,
+    alert_color: str,
+    muted_color: str,
+    type_labels: dict[str, str] | None = None,
+    height: int = 420,
+):
+    """Per-module daily-count bar stack, one row per module (§2.1).
+
+    ``daily`` / ``surge`` are ``page_logic.daily_counts`` / ``surge_days``
+    output (all modules). Surge days render in ``alert_color`` with a small ▲
+    marker; a grey dotted line marks each module's own median×factor threshold.
+    Rows share the x-axis; only the bottom row carries the rangeslider, default
+    range the last 30 days (slider itself spans the full period).
+    """
+
+    from datetime import timedelta
+    from plotly.subplots import make_subplots
+    import plotly.graph_objects as go
+
+    if not modules or daily is None or len(daily) == 0:
+        return _empty_fig(fmt.NO_DATA)
+
+    _ensure_template()
+    n = len(modules)
+    fig = make_subplots(rows=n, cols=1, shared_xaxes=True, vertical_spacing=0.06)
+
+    surge_keys: set[tuple[str, Any]] = set()
+    if surge is not None and len(surge) > 0:
+        surge_keys = {(r.module, r.day) for r in surge.itertuples()}
+
+    all_days: list = []
+    for i, module in enumerate(modules, start=1):
+        sub = daily[daily["module"] == module].sort_values("day")
+        days = list(sub["day"])
+        counts = list(sub["count"])
+        by_types = list(sub["by_type"])
+        all_days.extend(days)
+        median = float(sub["count"].median()) if len(sub) else 0.0
+        threshold = median * float(surge_factor)
+        is_surge = [(module, d) in surge_keys for d in days]
+        colors = [alert_color if s else accent_color for s in is_surge]
+        hover_text = [
+            f"{d.strftime('%m-%d')} ({_WEEKDAY_KR[d.weekday()]}) · {module} · {int(c)}건"
+            + (f" ({_by_type_text(bt, type_labels)})" if bt else "")
+            for d, c, bt in zip(days, counts, by_types)
+        ]
+        # customdata[0] = hover text, customdata[1] = ISO date, customdata[2] =
+        # module name — [1]/[2] let the caller map a click back to (day, module)
+        # without depending on the x-axis value's exact serialised form.
+        customdata = [[hover_text[j], days[j].isoformat(), module] for j in range(len(days))]
+        fig.add_trace(
+            go.Bar(
+                x=days, y=counts, marker_color=colors,
+                customdata=customdata, hovertemplate="%{customdata[0]}<extra></extra>",
+                showlegend=False,
+            ),
+            row=i, col=1,
+        )
+        surge_x = [d for d, s in zip(days, is_surge) if s]
+        surge_y = [c for c, s in zip(counts, is_surge) if s]
+        if surge_x:
+            top = max(counts) if counts else 1
+            fig.add_trace(
+                go.Scatter(
+                    x=surge_x, y=[c + top * 0.08 + 0.5 for c in surge_y], mode="text",
+                    text=["▲"] * len(surge_x), textfont=dict(color=alert_color, size=12),
+                    showlegend=False, hoverinfo="skip",
+                ),
+                row=i, col=1,
+            )
+        if median > 0 and days:
+            fig.add_shape(
+                type="line", x0=min(days), x1=max(days), y0=threshold, y1=threshold,
+                line=dict(color=muted_color, dash="dot", width=1),
+                row=i, col=1,
+            )
+        avg = float(sub["count"].mean()) if len(sub) else 0.0
+        fig.add_annotation(
+            text=module, xref=f"{_axis_ref(i, 'x')} domain", yref=f"{_axis_ref(i, 'y')} domain",
+            x=0.0, y=1.18, xanchor="left", showarrow=False, font=dict(size=12, color=theme.COLOR["text"]),
+        )
+        fig.add_annotation(
+            text=f"일평균 {fmt.fmt_count_per_day(avg)}",
+            xref=f"{_axis_ref(i, 'x')} domain", yref=f"{_axis_ref(i, 'y')} domain",
+            x=1.0, y=1.18, xanchor="right", showarrow=False, font=dict(size=11, color=muted_color),
+        )
+
+    fig.update_xaxes(matches="x")
+    if all_days:
+        max_day = max(all_days)
+        min_day = min(all_days)
+        default_start = max(min_day, max_day - timedelta(days=29))
+        fig.update_xaxes(range=[default_start, max_day])
+        fig.update_xaxes(
+            rangeslider=dict(visible=True, thickness=0.06, range=[min_day, max_day]),
+            row=n, col=1,
+        )
+    fig.update_layout(template=_TPL, height=height, showlegend=False, margin=dict(l=16, r=16, t=28, b=16))
+    fig.update_yaxes(showgrid=False)
+    return fig
+
+
+def anomaly_hour_heatmap_with_sidebar(
+    matrix: dict[str, Any],
+    *,
+    night_hours: list[int],
+    accent_color: str,
+    low_color: str,
+    faint_color: str,
+    height: int = 360,
+):
+    """24h × date(or week) heatmap + a per-hour total bar sidebar (§2.2).
+
+    ``matrix`` is ``page_logic.hour_by_day_matrix`` output. Colour caps at
+    ``matrix['p95']``; 0-count cells use ``low_color`` (not pure white) so an
+    all-zero row is still visibly a grid. Night hours (``night_hours``) get a
+    shaded strip left of the row labels.
+    """
+
+    from plotly.subplots import make_subplots
+    import plotly.graph_objects as go
+
+    rows = matrix.get("rows") or []
+    cols = matrix.get("cols") or []
+    if not rows or not cols:
+        return _empty_fig(fmt.NO_DATA)
+
+    _ensure_template()
+    z = matrix["matrix"]
+    p95 = matrix.get("p95") or 1
+    col_iso = [c.isoformat() if hasattr(c, "isoformat") else str(c) for c in cols]
+    col_labels = [c.strftime("%m-%d") if hasattr(c, "strftime") else str(c) for c in cols]
+    row_totals = [sum(row) for row in z]
+    # customdata[row][col] = that cell's date (ISO) so a click can be mapped
+    # back to a date without re-parsing the formatted x label.
+    customdata = [[col_iso[c] for c in range(len(cols))] for _ in rows]
+
+    fig = make_subplots(
+        rows=1, cols=2, column_widths=[0.8, 0.2], shared_yaxes=True, horizontal_spacing=0.02,
+    )
+    fig.add_trace(
+        go.Heatmap(
+            z=z, x=col_labels, y=rows, zmin=0, zmax=max(p95, 1),
+            xgap=1, ygap=1,
+            colorscale=[[0.0, low_color], [1.0, accent_color]],
+            colorbar=dict(title=f"≥ {p95}건", len=0.8),
+            customdata=customdata,
+            hovertemplate="%{y}시 · %{x}<br>%{z}건<extra></extra>",
+        ),
+        row=1, col=1,
+    )
+    fig.add_trace(
+        go.Bar(
+            x=row_totals, y=rows, orientation="h", marker_color=accent_color,
+            hovertemplate="%{y}시 합계 %{x}건<extra></extra>", showlegend=False,
+        ),
+        row=1, col=2,
+    )
+    for h in night_hours:
+        fig.add_shape(
+            type="rect", xref="paper", yref="y", x0=-0.06, x1=0.0, y0=h - 0.5, y1=h + 0.5,
+            fillcolor=faint_color, opacity=0.35, line_width=0, layer="below",
+        )
+    fig.update_yaxes(autorange="reversed", dtick=2, title_text="시(0~23)", row=1, col=1)
+    fig.update_yaxes(autorange="reversed", row=1, col=2)
+    fig.update_xaxes(title_text=matrix.get("unit", "일"), row=1, col=1)
+    fig.update_xaxes(title_text="합계", row=1, col=2)
+    fig.update_layout(template=_TPL, height=height, margin=dict(l=52, r=16, t=24, b=34))
+    return fig
+
+
+def anomaly_24h_stacked_bar(
+    profile: list[dict[str, Any]],
+    usual: list[float],
+    *,
+    type_colors: dict[str, str],
+    type_labels: dict[str, str] | None = None,
+    muted_color: str | None = None,
+    height: int = 300,
+):
+    """24h stacked bar (per-type) + the all-period 'usual' hourly average line (§2.3)."""
+
+    import plotly.graph_objects as go
+
+    if not profile:
+        return _empty_fig(fmt.NO_DATA)
+
+    _ensure_template()
+    labels = type_labels or {}
+    hours = [p["hour"] for p in profile]
+    types: list[str] = []
+    for p in profile:
+        for t in p.get("by_type", {}):
+            if t not in types:
+                types.append(t)
+
+    fig = go.Figure()
+    for t in types:
+        ys = [p.get("by_type", {}).get(t, 0) for p in profile]
+        fig.add_trace(
+            go.Bar(
+                x=hours, y=ys, name=labels.get(t, t),
+                marker_color=type_colors.get(t, theme.COLOR["accent"]),
+                hovertemplate="%{x}시<br>" + labels.get(t, t) + " %{y}건<extra></extra>",
+            )
+        )
+    if usual:
+        fig.add_trace(
+            go.Scatter(
+                x=hours, y=usual[: len(hours)], name="평소", mode="lines",
+                line=dict(color=muted_color or theme.COLOR["muted"], dash="dot", width=1.6),
+                hovertemplate="%{x}시<br>평소 평균 %{y:.1f}건<extra></extra>",
+            )
+        )
+    fig.update_layout(
+        template=_TPL, height=height, barmode="stack",
+        xaxis=dict(title="시(0~23)", dtick=2), yaxis=dict(title="건수"),
+    )
+    return fig
+
+
 _TYPE_SYMBOLS = ["circle", "square", "triangle-up", "diamond", "x"]
 
 
