@@ -83,7 +83,7 @@ def render(settings: dict[str, Any]) -> None:
                 label_visibility="collapsed"))
             _row(st, "탄소 가격 (원/tCO2, 가정)", lambda: st.number_input(
                 "탄소 가격", min_value=0.0, value=settings.get("carbon_price"), step=1000.0,
-                placeholder="미설정", key=_KEYS["carbon_price"], on_change=_store,
+                placeholder="미설정", key=_KEYS["carbon_price"], on_change=_store, help=config.CARBON_PRICE_SOURCE,
                 args=("carbon_price",), label_visibility="collapsed"))
             st.button("기본값으로 되돌리기", key="st_reset", on_click=_reset)
             st.caption(

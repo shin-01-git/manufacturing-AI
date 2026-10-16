@@ -326,6 +326,8 @@ def delta_chip(pct: float | None) -> str:
 
     if pct is None:
         return ""
+    if abs(pct) < 0.05:  # ±0.0%로만 보이는 변화는 정보가 없어 칩을 숨긴다
+        return '<span class="fec-delta">변화 없음</span>'
     arrow = "▲" if pct >= 0 else "▼"
     return f'<span class="fec-delta">{arrow}{abs(pct):.1f}%</span>'
 

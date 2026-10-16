@@ -681,7 +681,8 @@ def module_trend_chart(series: dict[str, tuple[list, list[float]]], *, height: i
     return fig
 
 
-def module_compare_bar(items: list[dict[str, Any]], selected: set[str], *, height: int = 300):
+def module_compare_bar(items: list[dict[str, Any]], selected: set[str], *, height: int = 300,
+                       axis_max: float | None = None, axis_title: str | None = None, value_fmt=None):
     """Horizontal bars of mean hourly power per module; selected = accent, others grey."""
 
     import plotly.graph_objects as go
@@ -694,13 +695,15 @@ def module_compare_bar(items: list[dict[str, Any]], selected: set[str], *, heigh
 
     peak = max(r["mean"] for r in items) or 1.0
     # 막대가 끝까지 차지 않도록 축 최대값 = 최대×2.5 이상인 1·2·5·10 계열 값 (예: 3 → 10)
-    raw = peak * 2.5
-    mag = 10 ** math.floor(math.log10(raw))
-    axis_max = next(m * mag for m in (1, 2, 5, 10) if m * mag >= raw)
+    if axis_max is None:
+        raw = peak * 2.5
+        mag = 10 ** math.floor(math.log10(raw))
+        axis_max = next(m * mag for m in (1, 2, 5, 10) if m * mag >= raw)
+    vf = value_fmt or fmt.fmt_pow
     fig = go.Figure(
         go.Bar(
             x=[r["mean"] for r in ordered],
-            text=[f"{fmt.fmt_pow(r['mean'])} · {r['share']:.1f}%" for r in ordered],
+            text=[f"{vf(r['mean'])} · {r['share']:.1f}%" for r in ordered],
             textposition="outside", textfont=dict(size=11),
             cliponaxis=False,
             y=[r["module"] for r in ordered],
@@ -708,13 +711,14 @@ def module_compare_bar(items: list[dict[str, Any]], selected: set[str], *, heigh
             marker=dict(
                 color=[theme.COLOR["accent"] if r["module"] in selected else theme.token("bar_gray") for r in ordered]
             ),
-            customdata=[[fmt.fmt_pow(r["mean"]), f"{r['share']:.1f}%"] for r in ordered],
-            hovertemplate="%{y}<br>평균 %{customdata[0]} (비중 %{customdata[1]})<extra></extra>",
+            customdata=[[vf(r["mean"]), f"{r['share']:.1f}%"] for r in ordered],
+            hovertemplate="%{y}<br>%{customdata[0]} (비중 %{customdata[1]})<extra></extra>",
         )
     )
     fig.update_layout(
         template=_TPL, height=height, showlegend=False, bargap=0.4,
-        xaxis=dict(title=f"평균 시간당 전력(kWh) · 축 최대 {fmt.fmt_pow(axis_max)}", showgrid=True, range=[0, axis_max]),
+        xaxis=dict(title=axis_title or f"평균 시간당 전력(kWh) · 축 최대 {fmt.fmt_pow(axis_max)}",
+                   showgrid=True, range=[0, axis_max]),
         yaxis=dict(showgrid=False, type="category", dtick=1),
         margin=dict(l=110, r=16, t=8, b=34),
     )

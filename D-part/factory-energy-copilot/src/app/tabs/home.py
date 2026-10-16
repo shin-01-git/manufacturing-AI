@@ -9,6 +9,8 @@ evaluation.json(config 기본 계수) 값이다 (v3 §6 규칙 2).
 
 from __future__ import annotations
 
+import math
+
 from typing import Any
 
 from config import config
@@ -160,8 +162,11 @@ def _render_executive_report(st, bundle, settings) -> None:
                     sub=fmt.fmt_full(cur["bill"], "bill"), compact=True), unsafe_allow_html=True)
         c3.markdown(components.kpi_tile("월 탄소", fmt.fmt_big(cur["carbon"]), unit="kgCO₂",
                     sub=fmt.fmt_full(cur["carbon"], "carbon"), compact=True), unsafe_allow_html=True)
-        c4.markdown(components.kpi_tile("감축 우선 검토", " · ".join(r["reduction_candidates"][:3]) or "—",
-                    sub="탄소 배출 상위 3개 설비", compact=True), unsafe_allow_html=True)
+        cand = r["reduction_candidates"][:3]
+        c4.markdown(components.kpi_tile(
+            "감축 우선 검토", cand[0] if cand else "—", unit=f"외 {len(cand) - 1}대" if len(cand) > 1 else "",
+            sub=("탄소 상위 · " + " · ".join(cand[1:])) if len(cand) > 1 else "탄소 배출 상위 설비",
+            compact=True), unsafe_allow_html=True)
 
         left, right = st.columns([1.4, 1])
         with left:
@@ -169,6 +174,8 @@ def _render_executive_report(st, bundle, settings) -> None:
                 charts.module_compare_bar(
                     [{"module": x["module"], "mean": x["carbon"], "share": x["share"]} for x in r["ranking"]],
                     set(r["reduction_candidates"]), height=320,
+                    axis_max=math.ceil(max((x["carbon"] for x in r["ranking"]), default=1) * 3 / 500) * 500,
+                    axis_title="월 탄소(kgCO₂)", value_fmt=lambda v: f"{v:,.0f} kgCO₂",
                 ),
                 width="stretch", config=charts.PLOTLY_CONFIG,
             )
@@ -334,9 +341,11 @@ def _render_kpis(st, bundle, ctx, forecast_ok, totals, buckets, unit, profile, k
             "예상 탄소비용(가정)",
             fmt.fmt_big_split(cost)[0] if (forecast_ok and cost is not None) else dash,
             unit=(fmt.fmt_big_split(cost)[1] + "원") if cost is not None else "",
-            sub=(fmt.fmt_full(cost, "bill") + " · tCO₂ × 단가") if (forecast_ok and cost is not None) else "단가 설정 ›",
+            sub=(f"{fmt.fmt_full(cost, 'bill')} · tCO₂ × {float(price):,.0f}원"
+                 + (" (KAU 시세 가정)" if float(price) == float(config.DEFAULT_CARBON_PRICE) else ""))
+                if (forecast_ok and cost is not None) else "단가 설정 ›",
             icon_name="leaf", disabled=cost is None,
-            chip_text="설정값 기준" if cost is not None else "",
+            chip_text="가정" if cost is not None else "",
         ),
         "mae": components.kpi_tile(
             "전력량 MAE(504)",
@@ -379,7 +388,7 @@ def _render_kpis(st, bundle, ctx, forecast_ok, totals, buckets, unit, profile, k
         ),
         "alerts": components.kpi_tile(
             "경고 건수", str(alerts["count"]) if not alerts["errors"] else dash,
-            sub="예측구간 이탈·요금 급증·이상 급증", icon_name="anomaly", icon_tone="warn",
+            sub="이상 6종 급변 탐지 (과거 측정 기준)", icon_name="anomaly", icon_tone="warn",
         ),
     }
     for col, key in zip(st.columns(5), profile["kpis"]):

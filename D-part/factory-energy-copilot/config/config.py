@@ -123,6 +123,10 @@ UNIT_FOOTNOTE: str = "ⓘ 데이터 전력량(Wh) ÷ 1,000 = kWh · 요금 = kWh
 STATUS_THRESHOLDS_APPROVED: bool = True
 STATUS_ALERT_PATTERN_COUNT: int = 4
 STATUS_WATCH_PATTERN_COUNT: int = 2
+# 예상 탄소비용 기본 단가(가정): 국내 배출권 KAU 시세 10,500원/tCO2 (SK증권 탄소배출권 리포트, 2025-10-01 기준).
+# 설정 화면에서 바꿀 수 있다. 실제 부과액이 아니라 '배출권으로 환산한 비용' 가정치.
+DEFAULT_CARBON_PRICE: float = 10500.0
+CARBON_PRICE_SOURCE: str = "KAU 배출권 10,500원/tCO₂ (2025-10-01 시세 가정)"
 CPART_Z_OPTIONS: tuple = (2.9, 2.92, 2.88)  # C파트(신승현) 합의: 2.9 또는 2.92 (3.0 이상은 0건)
 CPART_Z_DEFAULT: float = 2.9
 DEFAULT_ANOMALY_K: float = 3.5  # 급변 탐지 민감도: 전체 평균 ±kσ 밖 + 직전 시간 대비 ±kσ 급변

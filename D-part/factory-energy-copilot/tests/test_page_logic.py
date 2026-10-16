@@ -35,6 +35,7 @@ def test_delta_hidden_for_hour_unit_and_uses_complete_buckets():
 
 def test_totals_use_settings_rates_and_carbon_cost_needs_price():
     s = page_logic.default_settings()
+    s["carbon_price"] = None  # 단가 비우면 비용 없음
     t = page_logic.scaled_totals(_rows(hours=10), s)
     assert t["pow"] == 1000.0
     assert t["bill"] == 1000.0 * config.BILL_RATE
@@ -45,9 +46,9 @@ def test_totals_use_settings_rates_and_carbon_cost_needs_price():
     assert t["total_cost"] == t["bill"] + t["carbon_cost"]
 
 
-def test_carbon_price_default_is_blank_and_rates_flag():
+def test_carbon_price_default_is_sourced_assumption_and_rates_flag():
     s = page_logic.default_settings()
-    assert s["carbon_price"] is None
+    assert s["carbon_price"] == config.DEFAULT_CARBON_PRICE  # KAU 시세 가정(출처 config)
     assert not page_logic.rates_differ_from_default(s)
     s["bill_rate"] = 200.0
     assert page_logic.rates_differ_from_default(s)

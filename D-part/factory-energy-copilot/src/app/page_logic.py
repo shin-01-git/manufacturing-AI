@@ -121,7 +121,7 @@ def default_settings() -> dict[str, Any]:
     return {
         "bill_rate": float(config.BILL_RATE),
         "carbon_rate": float(config.CARBON_RATE),
-        "carbon_price": None,  # 원/tCO2, 빈칸 = 미설정 (임의 시장가 하드코딩 금지)
+        "carbon_price": float(config.DEFAULT_CARBON_PRICE),  # 원/tCO2, 출처 있는 시세 가정(config), 설정에서 변경
         "alert_interval": True,
         "bill_surge_pct": float(config.DEFAULT_BILL_SURGE_PCT),
         "anomaly_surge_factor": float(config.DEFAULT_ANOMALY_SURGE_FACTOR),
@@ -1233,7 +1233,9 @@ def load_saved_settings(path=None) -> dict[str, Any] | None:
     for k, v in data.items():
         if k not in base:
             continue
-        if v is None or isinstance(v, (int, float, bool, str)):
+        if v is None:
+            continue  # 예전 저장 파일의 '미설정'은 기본값(가정 단가)을 쓰게 둔다
+        if isinstance(v, (int, float, bool, str)):
             out[k] = v
     return out or None
 
