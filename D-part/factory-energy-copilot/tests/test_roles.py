@@ -77,5 +77,5 @@ def test_home_kpis_differ_by_role(monkeypatch):
         labels[role] = text
     tile = 'fec-tile-label">'
     assert tile + "전력량 MAE(504)" in labels["energy"] and tile + "전력량 MAE(504)" not in labels["executive"]
-    assert tile + "이상 급증 설비" in labels["facility"] and tile + "경고 건수" in labels["executive"]
+    assert tile + "점검 필요 설비" in labels["facility"] and tile + "경고 건수" in labels["executive"]
     assert "분석 플로우" in labels["energy"] and "분석 플로우" not in labels["executive"]

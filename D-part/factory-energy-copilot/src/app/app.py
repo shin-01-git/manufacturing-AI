@@ -129,7 +129,8 @@ def _period_chip(page: str, period: dict) -> str:
         page_logic.PAGE_EQUIPMENT: "학습 원본",
         page_logic.PAGE_ANOMALY: "탐지",
     }.get(page, "")
-    return f"{label} {period['start']} ~ {period['end']} · 검증 모드".strip()
+    suffix = " · 5월 시간대별 예측" if page == page_logic.PAGE_HOME else ""
+    return f"{label} {period['start']} ~ {period['end']}{suffix}".strip()
 
 
 def _selected_range(page: str, period: dict) -> tuple[str | None, str | None]:
@@ -225,6 +226,10 @@ def main() -> None:
     page = _resolve_page()
     bundle = data_mod.cached_bundle()
     role = _render_sidebar(page)
+    if page_logic.SETTINGS_KEY not in st.session_state:
+        saved = page_logic.load_saved_settings()
+        if saved:
+            st.session_state[page_logic.SETTINGS_KEY] = page_logic.merged_settings(saved)
     settings = page_logic.merged_settings(st.session_state.get(page_logic.SETTINGS_KEY))
 
     period = _period_for_page(page, bundle)
@@ -232,9 +237,16 @@ def main() -> None:
     # the bell count is consistent on every page.
     alert_period = ui_logic.forecast_period(bundle["forecast"])
     a_start, a_end = _selected_range(page_logic.PAGE_HOME, alert_period)
+    # 이상 6종 = 전체 평균 ±kσ 밖 + 급격한 변화(설정의 민감도 k). 특징 파일이 없으면 artifact 값
+    feats = (bundle.get("features_hourly") or {}).get("frame")
+    pattern = (
+        page_logic.detect_sudden(feats, k=float(settings["anomaly_k"]),
+                                 night_hours=set(page_logic.night_hours(settings)))
+        if feats is not None else bundle.get("pattern")
+    )
     alerts = page_logic.build_alerts(
         bundle["actual_vs_pred"], bundle["forecast"], bundle["trend"], settings,
-        start=a_start, end=a_end,
+        start=a_start, end=a_end, pattern=pattern,
     )
 
     filters = _render_header(page, period, alerts)
@@ -245,6 +257,7 @@ def main() -> None:
         "gran": filters["gran"],
         "start": filters["start"],
         "end": filters["end"],
+        "pattern": pattern,
     }
 
     if page == page_logic.PAGE_HOME:
@@ -262,6 +275,8 @@ def main() -> None:
             settings=settings,
             role=role,
             hourly_frame=bundle.get("anomaly_hourly_frame"),
+            pattern=pattern,
+            features=(bundle.get("features_hourly") or {}).get("frame"),
         )
     elif page == page_logic.PAGE_COPILOT:
         copilot_tab.render(agent_mod.Agent(), {"role": role, "start": ctx["start"], "end": ctx["end"]})
@@ -269,8 +284,9 @@ def main() -> None:
         settings_tab.render(settings)
 
     st.markdown(
-        '<div class="fec-footer">본 화면은 artifacts(batch) 기반 검증 모드입니다. '
-        "배치 산출물 기준이며, 수치는 공용 포매터로만 표시합니다.</div>",
+        '<div class="fec-footer">과거 전력 소비 데이터(2024-12-01 – 2025-04-29)로 학습해 '
+        "2025-05-10 00:00 – 05-31 00:00 시간대별 전력 사용량을 예측한 결과입니다. "
+        "수치는 artifacts(batch) 산출물 기준입니다.</div>",
         unsafe_allow_html=True,
     )
 

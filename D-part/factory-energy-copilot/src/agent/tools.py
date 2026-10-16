@@ -40,6 +40,23 @@ from config import config
 PREDICTIONS_NAME = "predictions.csv"
 BPART_FORECAST_NAME = "forecast_bpart.csv"  # B-part 선택 모델 예측(scripts/import_bpart_forecast.py)
 BPART_META_NAME = "forecast_bpart_meta.json"
+BPART_EVALUATION_NAME = "evaluation_bpart.json"
+BPART_SELECTION_NAME = "model_selection_bpart.json"
+SELECTION_NAME = "model_selection.json"
+
+
+def active_artifact(default: str, preferred: str, *, artifacts_dir: Path | None = None) -> str:
+    """B-part 선택 모델 산출물(preferred)이 있으면 그것을, 없으면 기존 산출물(default) 이름을 돌려준다.
+
+    대시보드·에이전트·브리핑이 같은 예측/평가/모델 선택 근거를 보도록 한 곳에서 고른다.
+    """
+
+    try:
+        if resolve_artifact_path(preferred, artifacts_dir=artifacts_dir).exists():
+            return preferred
+    except PathSecurityError:
+        pass
+    return default
 EVALUATION_NAME = "evaluation.json"
 MODULE_STATUS_NAME = "module_status.csv"
 ANOMALY_EVENTS_NAME = "anomaly_events.parquet"
@@ -140,7 +157,7 @@ def get_forecast_summary(
     end: str | datetime | None = None,
     *,
     artifacts_dir: Path | None = None,
-    name: str = PREDICTIONS_NAME,
+    name: str | None = None,
 ) -> dict[str, Any]:
     """Summarise the May forecast window from ``predictions.csv`` (or ``name``).
 
@@ -161,6 +178,8 @@ def get_forecast_summary(
     except ValueError as exc:
         return _error("bad_input", str(exc))
 
+    if name is None:
+        name = active_artifact(PREDICTIONS_NAME, BPART_FORECAST_NAME, artifacts_dir=artifacts_dir)
     try:
         path = resolve_artifact_path(name, artifacts_dir=artifacts_dir)
     except PathSecurityError as exc:
@@ -229,20 +248,38 @@ def get_evaluation(*, artifacts_dir: Path | None = None) -> dict[str, Any]:
     Reads: artifacts/evaluation.json only.
     """
 
+    name = active_artifact(EVALUATION_NAME, BPART_EVALUATION_NAME, artifacts_dir=artifacts_dir)
     try:
-        path = resolve_artifact_path(EVALUATION_NAME, artifacts_dir=artifacts_dir)
+        path = resolve_artifact_path(name, artifacts_dir=artifacts_dir)
     except PathSecurityError as exc:
         return _error("path_denied", str(exc))
     if not path.exists():
-        return _error("not_found", f"{EVALUATION_NAME} 없음 ({NO_DATA})")
+        return _error("not_found", f"{name} 없음 ({NO_DATA})")
 
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        return _error("bad_schema", f"{EVALUATION_NAME} 파싱 실패: {exc}")
+        return _error("bad_schema", f"{name} 파싱 실패: {exc}")
     if not isinstance(data, dict) or "mae_hourly_pow" not in data:
-        return _error("bad_schema", f"{EVALUATION_NAME} 스키마 불일치")
+        return _error("bad_schema", f"{name} 스키마 불일치")
     return data
+
+
+def get_selection(*, artifacts_dir: Path | None = None) -> dict[str, Any]:
+    """모델 선택 근거(model_selection*.json). B-part 산출물이 있으면 그것."""
+
+    name = active_artifact(SELECTION_NAME, BPART_SELECTION_NAME, artifacts_dir=artifacts_dir)
+    try:
+        path = resolve_artifact_path(name, artifacts_dir=artifacts_dir)
+    except PathSecurityError as exc:
+        return _error("path_denied", str(exc))
+    if not path.exists():
+        return _error("not_found", f"{name} 없음 ({NO_DATA})")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return _error("bad_schema", f"{name} 파싱 실패: {exc}")
+    return data if isinstance(data, dict) else _error("bad_schema", name)
 
 
 # ---------------------------------------------------------------------------
@@ -270,18 +307,40 @@ def get_module_status(*, artifacts_dir: Path | None = None) -> dict[str, Any]:
     if raw_rows and not required.issubset(raw_rows[0].keys()):
         return _error("bad_schema", f"{MODULE_STATUS_NAME} 스키마 불일치")
 
+    pattern_counts: dict[str, int] = {}
+    if config.STATUS_THRESHOLDS_APPROVED:
+        pat = get_pattern_anomalies(artifacts_dir=artifacts_dir)
+        for ev in pat.get("events", []) if "error" not in pat else []:
+            pattern_counts[ev["module"]] = pattern_counts.get(ev["module"], 0) + 1
+
     modules: list[dict[str, Any]] = []
     for raw in raw_rows:
+        ratio = float(raw["anomaly_ratio"]) if raw["anomaly_ratio"] else 0.0
+        status = raw["status"]
+        if config.STATUS_THRESHOLDS_APPROVED:
+            status = module_status_label(ratio, pattern_counts.get(raw["module"], 0))
         modules.append(
             {
                 "module": raw["module"],
                 "anomaly_count": int(raw["anomaly_count"]) if raw["anomaly_count"] else 0,
-                "anomaly_ratio": float(raw["anomaly_ratio"]) if raw["anomaly_ratio"] else 0.0,
+                "anomaly_ratio": ratio,
                 "last_seen": raw["last_seen"],
-                "status": raw["status"],
+                "status": status,
+                "pattern_count": pattern_counts.get(raw["module"], 0),
             }
         )
     return {"count": len(modules), "modules": modules}
+
+
+def module_status_label(ratio: float, pattern_count: int) -> str:
+    """설비 상태 경계값(config.STATUS_*)으로 정상/주의/이상을 정한다."""
+
+    # ratio(5초 기준 미달 비율)는 참고값 — 상태는 급변 탐지 건수로만 정한다(거짓 양성 축소)
+    if pattern_count >= config.STATUS_ALERT_PATTERN_COUNT:
+        return "이상"
+    if pattern_count >= config.STATUS_WATCH_PATTERN_COUNT:
+        return "주의"
+    return "정상"
 
 
 # ---------------------------------------------------------------------------
@@ -412,6 +471,7 @@ def get_anomaly_trend(
 
 # Registry used by the agent for OpenAI function calling (name -> callable).
 TOOL_REGISTRY = {
+    "get_pattern_anomalies": lambda artifacts_dir=None, **_: get_pattern_anomalies(artifacts_dir=artifacts_dir),
     "get_forecast_summary": get_forecast_summary,
     "get_evaluation": get_evaluation,
     "get_module_status": get_module_status,
@@ -427,8 +487,16 @@ def openai_tool_schemas() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "get_pattern_anomalies",
+                "description": "이상 6종(비정상 패턴·야간 이상가동·부하 불균형·무효전력 급증·역률 급감·전류만 증가) 탐지 목록. 전체 평균 ±3.5σ 밖 + 직전 시간 대비 급변인 설비·시각. 이상/점검 질문의 주 근거",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "get_forecast_summary",
-                "description": "artifacts/predictions.csv 기반 기간별 전력·요금·탄소 합계/평균",
+                "description": "5월 예측(2025-05-10 00:00–05-31 00:00, 1시간 단위)의 기간별 전력량(kWh)·요금(원)·탄소(kgCO2) 합계, 일별 합계, 최대·최소 시간. 날짜가 없으면 전체 예측 기간",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -442,7 +510,7 @@ def openai_tool_schemas() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "get_evaluation",
-                "description": "artifacts/evaluation.json 기반 MAE(504/505)·총합오차·비교표",
+                "description": "예측 정확도: 5월 정답 대비 MAE(Wh, 504/505시점), 모델별 과거 검증·5월 MAE 비교",
                 "parameters": {"type": "object", "properties": {}},
             },
         },
@@ -450,7 +518,7 @@ def openai_tool_schemas() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "get_module_status",
-                "description": "artifacts/module_status.csv 기반 설비별 상태·비율·최근 시각",
+                "description": "설비 13대의 상태(정상/주의/이상 — 급변 탐지 건수 기준), 급변 탐지 건수, 5초 기준 미달 비율(참고)",
                 "parameters": {"type": "object", "properties": {}},
             },
         },
@@ -458,7 +526,7 @@ def openai_tool_schemas() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "get_anomaly_events",
-                "description": "artifacts/anomaly_events.parquet 기반 이상 이벤트 조회",
+                "description": "5초 측정 중 3상 동시 저전압·저역률 기준 미달 기록(참고용, 거짓 양성 많음). 설비·기간·유형별 건수와 최근 기록",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -485,3 +553,27 @@ def openai_tool_schemas() -> list[dict[str, Any]]:
             },
         },
     ]
+
+
+# ---------------------------------------------------------------------------
+# 이상 6종(패턴) — scripts/detect_pattern_anomalies.py 산출물
+# ---------------------------------------------------------------------------
+PATTERN_NAME = "pattern_anomalies.parquet"
+
+
+def get_pattern_anomalies(*, artifacts_dir: Path | None = None) -> dict[str, Any]:
+    """설비×시간 이상 6종 탐지 결과. ``{"count", "events": [{module, hour, type, metric, value,
+    baseline, z, unit, rule}]}``. 파일이 없으면 not_found."""
+
+    try:
+        path = resolve_artifact_path(PATTERN_NAME, artifacts_dir=artifacts_dir)
+    except PathSecurityError as exc:
+        return _error("path_denied", str(exc))
+    if not path.exists():
+        return _error("not_found", f"{PATTERN_NAME} 없음 ({NO_DATA})")
+    rows = _read_parquet_rows(path)
+    for r in rows:
+        h = r.get("hour")
+        if hasattr(h, "strftime"):
+            r["hour"] = h.strftime("%Y-%m-%d %H:%M:%S")
+    return {"count": len(rows), "events": rows}

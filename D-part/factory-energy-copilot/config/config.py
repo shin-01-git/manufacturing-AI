@@ -116,8 +116,14 @@ UNIT_LABELS: dict[str, str] = {
 WH_PER_KWH: float = 1000.0
 UNIT_FOOTNOTE: str = "ⓘ 데이터 전력량(Wh) ÷ 1,000 = kWh · 요금 = kWh × 180원 · 탄소 = kWh × 0.424kgCO₂"
 
-# O-3 상태 경계값 미승인. True가 되기 전에는 status를 '미확정' 회색 칩으로만 표시.
-STATUS_THRESHOLDS_APPROVED: bool = False
+# O-3 상태 경계값 (확정). 설비 상태 = 규칙 이상 비율 + 이상 6종(패턴) 탐지 건수
+#   10/16 멘토 피드백(거짓 양성 과다)으로 상태는 '급격한 변화' 탐지 건수만 본다.
+#   5초 단위 기준 미달(규칙 이벤트)은 거의 매시간 생기는 순간 저하라 상태·경고에서 제외(참고 표시).
+#   이상: 급변 탐지 ≥ 4건 · 주의: 2–3건 · 정상: 0–1건 (1건은 우연 수준이라 상태에 반영하지 않음)
+STATUS_THRESHOLDS_APPROVED: bool = True
+STATUS_ALERT_PATTERN_COUNT: int = 4
+STATUS_WATCH_PATTERN_COUNT: int = 2
+DEFAULT_ANOMALY_K: float = 3.5  # 급변 탐지 민감도: 전체 평균 ±kσ 밖 + 직전 시간 대비 ±kσ 급변
 
 # 분석 기준 기간(검증 모드) 표시용. 예측 artifacts의 id 범위와 일치해야 한다.
 ANALYSIS_PERIOD_START: str = "2025-05-10"
@@ -150,6 +156,31 @@ DEFAULT_NIGHT_END_HOUR: int = 6
 # ---------------------------------------------------------------------------
 # 환경변수 로더 (NFR-6) — 값/부분값을 로그에 남기지 않는다.
 # ---------------------------------------------------------------------------
+def _load_dotenv() -> None:
+    """프로젝트 폴더(또는 레포 루트)의 .env에서 OPENAI_API_KEY 등을 읽어 환경변수에 넣는다.
+
+    이미 설정된 환경변수는 덮어쓰지 않는다. .env는 .gitignore 대상(커밋 금지). 값은 로그에 남기지 않는다.
+    """
+
+    for path in (PROJECT_ROOT / ".env", PROJECT_ROOT.parent.parent / ".env"):
+        try:
+            text = path.read_text(encoding="utf-8-sig")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k = k.strip().removeprefix("export ").strip()
+            v = v.strip().strip('"').strip("'")
+            if k and v and not os.environ.get(k):
+                os.environ[k] = v
+
+
+_load_dotenv()
+
+
 def get_openai_api_key() -> str | None:
     """OPENAI_API_KEY를 환경변수에서만 읽는다. 값을 로그에 남기지 않는다.
 

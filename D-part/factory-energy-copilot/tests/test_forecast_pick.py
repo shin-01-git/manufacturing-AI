@@ -102,6 +102,102 @@ def test_anomaly_reasons_basis():
 def test_alert_titles_use_feedback_types():
     trend = {"points": [{"bucket": f"b{i}", "module": "17", "type": "power_factor_low_3phase",
                          "count": c} for i, c in enumerate([1, 1, 1, 9])]}
-    a = page_logic.build_alerts({"error": {}}, {"error": {}}, trend, page_logic.merged_settings(None))
-    titles = [it["title"] for it in a["items"]]
-    assert titles == ["역률 급감 · 17"]
+    a = page_logic.build_alerts({"error": {}}, {"error": {}}, trend, page_logic.merged_settings(None),
+                                include_surge=True)
+    assert [it["title"] for it in a["items"]] == ["역률 급감 · 17"]
+    # 10/16 피드백: 5초 기준 미달 급증은 거짓 양성이 많아 기본 경고 목록에서 제외
+    b = page_logic.build_alerts({"error": {}}, {"error": {}}, trend, page_logic.merged_settings(None))
+    assert b["items"] == []
+
+
+def test_settings_roundtrip(tmp_path):
+    p = tmp_path / "s.json"
+    s = page_logic.default_settings()
+    s["bill_rate"] = 200.0
+    assert page_logic.save_settings(s, p)
+    out = page_logic.load_saved_settings(p)
+    assert out["bill_rate"] == 200.0
+    p.write_text('{"bill_rate": [1], "unknown": 3}', encoding="utf-8")
+    assert page_logic.load_saved_settings(p) is None
+
+
+def test_module_status_label_thresholds():
+    from src.agent import tools
+    # 상태 = 급변 탐지 건수만 (5초 기준 미달 비율은 참고)
+    assert tools.module_status_label(0.5, 0) == "정상"
+    assert tools.module_status_label(0.0, 1) == "정상"
+    assert tools.module_status_label(0.0, 2) == "주의"
+    assert tools.module_status_label(0.0, 4) == "이상"
+
+
+def test_load_series_daily_and_recent():
+    import pandas as pd
+    hours = pd.date_range("2025-04-28 00:00", periods=48, freq="h")
+    ff = pd.DataFrame({"module": "A", "hour": hours, "n": 720, "active_power": 3000.0})
+    b = {"features_hourly": {"frame": ff}}
+    d = page_logic.load_series(b, "A", "일별")
+    assert d["y"] == [72.0, 72.0]
+    r = page_logic.load_series(b, "A", "최근 24시간")
+    assert len(r["y"]) == 24 and r["y"][0] == 3.0
+    assert page_logic.load_series(b, "A", "최근 1시간") is None
+
+
+def test_window_rows_crosses_midnight():
+    from datetime import datetime
+    w = page_logic.window_rows(_rows(), datetime(2025, 5, 10, 18), 24)
+    assert len(w) == 24 and w[0]["id"].startswith("2025-05-10 18") and w[-1]["id"].startswith("2025-05-11 17")
+
+
+def test_status_for_period_matches_filtered_events():
+    import pandas as pd
+    status = {"modules": [{"module": "A", "anomaly_count": 4, "anomaly_ratio": 0.4, "last_seen": "", "status": "미확정"},
+                          {"module": "B", "anomaly_count": 0, "anomaly_ratio": 0.0, "last_seen": "", "status": "미확정"}]}
+    events = {"count": 1, "events": [{"module": "A", "localtime": "2025-04-02T01:00:00+09:00"}]}
+    feats = pd.DataFrame({"module": ["A", "A", "B"], "n": [100, 100, 100],
+                          "hour": pd.to_datetime(["2025-04-01 00:00", "2025-04-02 00:00", "2025-04-02 00:00"])})
+    out = page_logic.status_for_period(status, events, feats, None, "2025-04-02", "2025-04-02")
+    a, b = out["modules"]
+    assert a["anomaly_count"] == 1 and a["anomaly_ratio"] == 0.01
+    assert b["anomaly_count"] == 0 and b["status"] == "정상"
+
+
+
+def test_detect_sudden_needs_level_and_jump():
+    import numpy as np
+    import pandas as pd
+    rng = np.random.default_rng(0)
+    n = 400
+    base = 3000 + rng.normal(0, 10, n)
+    base[200] = 3200  # 범위 이탈 + 급변
+    base[300:310] = 3060  # 수준은 높지만 서서히(첫 시간만 급변)
+    hours = pd.date_range("2025-01-01", periods=n, freq="h")
+    f = pd.DataFrame({"module": "A", "hour": hours, "n": 720, "active_power": base,
+                      "reactive_power": 600 + rng.normal(0, 5, n), "current_unbalance": 1.4 + rng.normal(0, .1, n),
+                      "pf_mean": 92 + rng.normal(0, .3, n), "current_r": 15.0, "current_s": 15.0, "current_t": 15.0})
+    out = page_logic.detect_sudden(f, k=3.5)
+    hits = [e["hour"] for e in out["events"] if e["type"] == "abnormal_pattern"]
+    assert "2025-01-09 08:00:00" in hits
+    assert not any(h.startswith("2025-01-13 1") for h in hits[1:]) or len(hits) <= 3
+
+
+def test_agent_answers_by_intent():
+    from src.agent import answers
+    assert answers.intent("전력량 예측 MAE 참고값은?") == "accuracy"
+    assert answers.intent("요금이 가장 높은 예측 시간대는?") == "peak"
+    assert answers.intent("야간에 전력을 많이 쓰는 설비는?") == "night"
+    assert answers.parse_dates("5월 15일 요금") == ("2025-05-15", "2025-05-15")
+    assert answers.parse_dates("5월 12일 주 전력량") == ("2025-05-12", "2025-05-18")
+    assert answers.parse_dates("5/10~5/12 합계") == ("2025-05-10", "2025-05-12")
+
+
+def test_agent_answers_more_intents():
+    from src.agent import answers
+    mods = ["13(3호기)", "17(6호기)", "3(분쇄기(2))", "4(분쇄기(1))"]
+    assert answers.find_modules("6호기 왜 이상이야?", mods) == ["17(6호기)"]
+    assert answers.find_modules("17호기 상태", mods) == ["17(6호기)"]
+    assert set(answers.find_modules("분쇄기 상태", mods)) == {"3(분쇄기(2))", "4(분쇄기(1))"}
+    assert answers.parse_dates("마지막 주 탄소량") == ("2025-05-26", "2025-05-31")
+    assert answers.intent("부하 불균형이 뭐야?") == "define"
+    assert answers.intent("전기요금 줄이려면?") == "advice"
+    assert answers.intent("부하 패턴 요약해 줘") == "pattern"
+    assert answers.intent("오늘 날씨 어때?") == "briefing"

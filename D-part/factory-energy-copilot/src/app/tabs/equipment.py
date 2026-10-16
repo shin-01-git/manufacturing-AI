@@ -69,7 +69,7 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> None:
 
     left, right = st.columns([1.45, 1])
     with left:
-        _render_pattern(st, frame, selected, start, end, settings)
+        _render_pattern(st, frame, selected, start, end, settings, bundle)
     with right:
         _render_quality(st, bundle)
     st.caption("예측은 공장 전체 단위입니다. 이 페이지는 학습 원본의 설비별 실측입니다.")
@@ -136,18 +136,38 @@ def _render_compare(st, means, selected: set[str]) -> None:
         )
 
 
-def _render_pattern(st, frame, selected, start, end, settings) -> None:
+PATTERN_VIEWS = ["최근 1시간", "최근 24시간", "일별", "요일×시간"]
+
+
+def _render_pattern(st, frame, selected, start, end, settings, bundle=None) -> None:
     with components.panel(height=H_LOW, key=PANEL_PATTERN):
-        head_l, head_r = st.columns([3, 2], vertical_alignment="center")
+        head_l, head_m, head_r = st.columns([2, 3.2, 1.8], vertical_alignment="center")
         with head_l:
             st.markdown(
-                components.panel_header("부하 패턴 (요일 × 시간)", icon_name="clock"),
+                components.panel_header("부하 패턴", icon_name="clock"),
                 unsafe_allow_html=True,
             )
+        with head_m:
+            view = st.segmented_control(
+                "보기", PATTERN_VIEWS, default=PATTERN_VIEWS[1], key="eq_pattern_view",
+                label_visibility="collapsed",
+            ) or PATTERN_VIEWS[1]
         with head_r:
             module = st.selectbox(
                 "설비", options=selected, key="eq_pattern_module", label_visibility="collapsed"
             )
+        if view != "요일×시간":
+            series = page_logic.load_series(bundle or {}, module, view, start, end)
+            if not series:
+                st.markdown(components.empty_state("부하 패턴 데이터 없음 (원본 집계 필요)"),
+                            unsafe_allow_html=True)
+                return
+            st.plotly_chart(
+                charts.load_series_chart(series, height=theme.chart_height(H_LOW, has_caption=True)),
+                width="stretch", config=charts.PLOTLY_CONFIG,
+            )
+            st.caption(series["caption"])
+            return
         pattern = page_logic.load_pattern(frame, module, start, end)
         st.plotly_chart(
             charts.load_pattern_heatmap(
@@ -173,7 +193,7 @@ def _render_quality(st, bundle) -> None:
                 q["module"],
                 f"{q['pf']:.1f}%",
                 f"{q['unbalance']:.2f}%" if "unbalance" in q else "—",
-                fmt.fmt_pow(q["reactive"]) if "reactive" in q else "—",
+                f"{q['reactive']:,.0f} var" if "reactive" in q else "—",
             ]
             for q in sorted(quality, key=lambda q: q["module"])
         ]

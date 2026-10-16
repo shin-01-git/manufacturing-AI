@@ -176,6 +176,64 @@ def contains_forbidden_assertion(text: str) -> bool:
 # ---------------------------------------------------------------------------
 # Agent facade: OpenAI function calling with cache + fallback (C5, NFR-6).
 # ---------------------------------------------------------------------------
+AGENT_CONTEXT = (
+    "[데이터 기준] 예측: 2024-12-01–2025-04-29 시간별 전력량으로 학습한 모델이 2025-05-10 00:00–05-31 00:00 "
+    "1시간 단위 505시점을 예측. 단위: 전력량 kWh, 요금 = kWh×180원, 탄소 = kWh×0.424 kgCO2, MAE는 Wh. "
+    "날짜가 없으면 전체 예측 기간으로 답한다. 이상: 설비 13대, 12/01–04/29 측정 기준. "
+    "이상/점검 질문은 get_pattern_anomalies(급변 탐지)를 먼저 쓰고, get_anomaly_events(5초 기준 미달)는 참고로만. "
+    "답은 질문에 대한 숫자부터 2–4문장으로 짧게."
+)
+
+
+def compact_tool_output(name: str, out: Any) -> Any:
+    """LLM에 넘길 도구 결과 요약(문맥 초과·흐린 답 방지)."""
+
+    from collections import Counter
+
+    if not isinstance(out, dict) or "error" in out:
+        return out
+    if name == "get_forecast_summary":
+        rows = out.get("rows", [])
+        daily: dict[str, float] = {}
+        for r in rows:
+            daily[r["id"][:10]] = daily.get(r["id"][:10], 0.0) + r["pred_pow"]
+        top = sorted(rows, key=lambda r: r["pred_pow"], reverse=True)[:3]
+        low = sorted(rows, key=lambda r: r["pred_pow"])[:3]
+        return {
+            "period": [out.get("start"), out.get("end")], "hours": out.get("count"),
+            "total_kwh": round(out.get("total_pred_pow", 0.0), 2),
+            "total_bill_won": round(out.get("total_pred_pow", 0.0) * config.BILL_RATE),
+            "total_carbon_kg": round(out.get("total_pred_pow", 0.0) * config.CARBON_RATE, 2),
+            "daily_kwh": {k: round(v, 2) for k, v in daily.items()},
+            "top_hours": [{"time": r["id"][:16], "kwh": round(r["pred_pow"], 3)} for r in top],
+            "lowest_hours": [{"time": r["id"][:16], "kwh": round(r["pred_pow"], 3)} for r in low],
+        }
+    if name == "get_anomaly_events":
+        evs = out.get("events", [])
+        return {
+            "count": out.get("count", len(evs)), "note": "5초 순간 기준 미달 기록(참고, 경고 아님)",
+            "by_module": dict(Counter(e["module"] for e in evs)),
+            "by_type": dict(Counter(e["type"] for e in evs)),
+            "latest": [{k: e.get(k) for k in ("module", "localtime", "type", "value", "normal_range")}
+                       for e in sorted(evs, key=lambda e: str(e.get("localtime")), reverse=True)[:10]],
+        }
+    if name == "get_pattern_anomalies":
+        evs = out.get("events", [])
+        return {
+            "count": len(evs),
+            "by_type": dict(Counter(config.ANOMALY_TYPE_LABELS.get(e["type"], e["type"]) for e in evs)),
+            "by_module": dict(Counter(e["module"] for e in evs)),
+            "events": [{"time": str(e["hour"])[:16], "module": e["module"],
+                        "type": config.ANOMALY_TYPE_LABELS.get(e["type"], e["type"]),
+                        "value": round(float(e["value"]), 2), "mean": round(float(e["baseline"]), 2),
+                        "unit": e.get("unit")} for e in evs[:40]],
+        }
+    if name == "get_anomaly_trend":
+        pts = out.get("points", [])
+        return {"count": len(pts), "points": pts[-60:]}
+    return out
+
+
 class Agent:
     """Agent facade. Uses OpenAI when a key exists, else rule-based fallback."""
 
@@ -259,12 +317,20 @@ class Agent:
     def _ask_rule_based(self, question: str, audience: str) -> AgentResult:
         """Deterministic routing: anomaly keywords -> anomaly, else briefing."""
 
-        lowered = question.lower()
-        anomaly_hint = any(k in question for k in ("이상", "설비", "전압", "역률")) or (
-            "anomaly" in lowered
-        )
-        if anomaly_hint:
-            return build_anomaly_answer(artifacts_dir=self.artifacts_dir)
+        from src.agent import answers as answers_mod
+
+        ans = answers_mod.answer(question, artifacts_dir=self.artifacts_dir)
+        if ans is not None:
+            src = ", ".join(ans["sources"])
+            return AgentResult(text=ans["text"] + (f"\n(출처: {src})" if src else ""), source="rule",
+                               data={"intent": answers_mod.intent(question)})
+        # 요약·보고 요청: 질문에 대상이 있으면 그 역할 브리핑(경영진 5줄 등)
+        if "경영" in question or "임원" in question:
+            audience = AUDIENCE_EXECUTIVE
+        elif "에너지" in question:
+            audience = AUDIENCE_ENERGY
+        elif "설비" in question or "현장" in question:
+            audience = AUDIENCE_FIELD
         return build_forecast_briefing(audience, artifacts_dir=self.artifacts_dir)
 
     def _ask_openai(self, question: str, audience: str) -> AgentResult:
@@ -277,7 +343,8 @@ class Agent:
         system = (
             "너는 공장 에너지 코파일럿이다. 숫자는 반드시 제공된 도구 결과에서만 쓰고, "
             "없으면 '데이터에 없음'이라고 답한다. '고장'·'위험 확정' 같은 단정을 쓰지 말고 "
-            "이상 관련 답변은 관찰된 사실/가능한 원인 후보/현장 확인 항목 세 구획으로 나눈다."
+            "이상 관련 답변은 관찰된 사실/가능한 원인 후보/현장 확인 항목 세 구획으로 나눈다.\n"
+            + AGENT_CONTEXT
         )
         messages = [
             {"role": "system", "content": system},
@@ -301,11 +368,16 @@ class Agent:
             except json.JSONDecodeError:
                 fn_args = {}
             tool_fn = tools_mod.TOOL_REGISTRY.get(fn_name)
-            tool_output = (
-                tool_fn(artifacts_dir=self.artifacts_dir, **fn_args)
-                if tool_fn
-                else {"error": "bad_input", "message": f"unknown tool {fn_name}"}
-            )
+            try:
+                tool_output = (
+                    tool_fn(artifacts_dir=self.artifacts_dir, **fn_args)
+                    if tool_fn
+                    else {"error": "bad_input", "message": f"unknown tool {fn_name}"}
+                )
+            except TypeError as exc:  # 모델이 없는 인자를 넣은 경우
+                tool_output = {"error": "bad_input", "message": str(exc)}
+            # 도구 원본(예측 505행·이벤트 6.5만 건)을 그대로 넘기면 문맥이 넘쳐 답이 흐려진다 → 요약
+            tool_output = compact_tool_output(fn_name, tool_output)
             messages.append(
                 {
                     "role": "tool",

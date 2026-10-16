@@ -89,6 +89,10 @@ def _read_json(name: str, artifacts_dir: Path | None) -> dict[str, Any] | None:
         return None
 
 
+def tools_mod_type_label(raw: str) -> str:
+    return config.ANOMALY_TYPE_LABELS.get(raw, raw)
+
+
 def _read_avp(artifacts_dir: Path | None) -> list[dict[str, Any]] | None:
     import csv
 
@@ -150,9 +154,12 @@ def watch_module_rows(status: dict[str, Any], limit: int) -> list[tuple[str, flo
 
     if "error" in status:
         return []
-    rows = [r for r in status["modules"] if int(r.get("anomaly_count", 0) or 0) > 0]
     if config.STATUS_THRESHOLDS_APPROVED:
-        rows = [r for r in rows if r.get("status") in ("주의", "이상")]
+        # 10/16: 상태 = 급변 탐지 건수. 이상 → 주의 순, 건수 많은 순 (ratio 자리에 건수)
+        rows = [r for r in status["modules"] if r.get("status") in ("주의", "이상")]
+        rows.sort(key=lambda r: (r.get("status") != "이상", -int(r.get("pattern_count", 0) or 0)))
+        return [(r["module"], float(r.get("pattern_count", 0) or 0), r.get("last_seen", "")) for r in rows[:limit]]
+    rows = [r for r in status["modules"] if int(r.get("anomaly_count", 0) or 0) > 0]
     rows.sort(key=lambda r: -float(r.get("anomaly_ratio", 0.0) or 0.0))
     return [(r["module"], float(r["anomaly_ratio"]), r.get("last_seen", "")) for r in rows[:limit]]
 
@@ -224,17 +231,21 @@ def build_briefing(
     status = tools_mod.get_module_status(artifacts_dir=artifacts_dir)
     trend = tools_mod.get_anomaly_trend(artifacts_dir=artifacts_dir)
     events = tools_mod.get_anomaly_events(artifacts_dir=artifacts_dir)
-    selection = _read_json(SELECTION_NAME, artifacts_dir)
-    avp = _read_avp(artifacts_dir)
+    selection = tools_mod.get_selection(artifacts_dir=artifacts_dir)
+    if "error" in selection:
+        selection = None
+    pattern = tools_mod.get_pattern_anomalies(artifacts_dir=artifacts_dir)
 
     calc = _Calc()
     f_ok = "error" not in forecast and forecast.get("count", 0) > 0
     rows = [r for r in forecast.get("rows", []) if _in_range(r["id"], start, end)] if f_ok else []
     f_ok = f_ok and bool(rows)
     PRED, EVAL, STAT, EV, HOURLY = (
-        "predictions.csv", "evaluation.json", "module_status.csv",
-        "anomaly_events.parquet", "anomaly_hourly.parquet",
+        tools_mod.active_artifact(tools_mod.PREDICTIONS_NAME, tools_mod.BPART_FORECAST_NAME, artifacts_dir=artifacts_dir),
+        tools_mod.active_artifact(tools_mod.EVALUATION_NAME, tools_mod.BPART_EVALUATION_NAME, artifacts_dir=artifacts_dir),
+        "module_status.csv", "anomaly_events.parquet", "anomaly_hourly.parquet",
     )
+    PAT = tools_mod.PATTERN_NAME
 
     # -- forecast numbers ---------------------------------------------------
     if f_ok:
@@ -265,25 +276,27 @@ def build_briefing(
     else:
         mae_s = err_s = NO_DATA
 
-    # -- interval exits -----------------------------------------------------
-    k = None
-    if avp is not None:
-        k = 0
-        for r in avp:
-            if not _in_range(r["id"], start, end) or r["low"] is None or r["high"] is None:
-                continue
-            if r["actual"] < r["low"] or r["actual"] > r["high"]:
-                k += 1
-        k_s = calc.add("예측구간 이탈 시간", f"{k}시간", AVP_NAME)
+    # -- 이상 6종(패턴) -------------------------------------------------------
+    p_ok = "error" not in pattern
+    if p_ok:
+        from collections import Counter
+
+        by_type = Counter(tools_mod_type_label(e["type"]) for e in pattern["events"])
+        k = pattern["count"]
+        k_s = calc.add("이상 6종 탐지", f"{k}건", PAT)
+        k_detail = " · ".join(
+            f"{t} {calc.add(f'이상 6종 {t}', str(n), PAT)}" for t, n in by_type.most_common()
+        )
     else:
-        k_s = NO_DATA
+        k, k_s, k_detail = None, NO_DATA, ""
 
     # -- anomaly numbers ----------------------------------------------------
     limit = 3 if audience in (EXECUTIVE, ENERGY) else 5
     watch = watch_module_rows(status, limit)
-    watch_chips = [(m, fmt.fmt_ratio_pct(ratio)) for m, ratio, _ in watch]
+    approved = bool(config.STATUS_THRESHOLDS_APPROVED)
+    watch_chips = [(m, f"급변 {int(v)}건" if approved else fmt.fmt_ratio_pct(v)) for m, v, _ in watch]
     for m, ratio_text in watch_chips:
-        calc.add(f"이상 비율 {m}", ratio_text, STAT)
+        calc.add(f"{'급변 탐지' if approved else '이상 비율'} {m}", ratio_text, STAT)
     events_ok = "error" not in events
 
     lines: list[BriefLine] = []
@@ -293,17 +306,20 @@ def build_briefing(
         if "error" in status:
             return BriefLine(label, NO_DATA, sources=[STAT])
         if not watch:
-            return BriefLine(label, "이상 건수가 기록된 설비는 없습니다.", sources=[STAT])
+            return BriefLine(label, "점검이 필요한 설비는 없습니다.", sources=[STAT])
+        if approved:
+            return BriefLine(label, "급격한 변화가 반복된 설비입니다 (이상·주의, 원인 단정 아님).",
+                             tone="watch", sources=[STAT, PAT], chips=watch_chips)
         return BriefLine(label, "설비별 이상 비율입니다 (관찰 기록, 설비 판정 아님).",
                          tone="watch", sources=[STAT], chips=watch_chips)
 
-    def interval_line(label: str = "확인 필요") -> BriefLine:
+    def interval_line(label: str = "이상 6종") -> BriefLine:
         if k is None:
-            return BriefLine(label, NO_DATA, sources=[AVP_NAME])
+            return BriefLine(label, NO_DATA, sources=[PAT])
         if k == 0:
-            return BriefLine(label, "예측구간을 벗어난 시간은 없습니다.", sources=[AVP_NAME])
-        return BriefLine(label, f"예측구간 이탈 {k_s} — 해당 시간대 운전 기록 확인이 필요합니다.",
-                         tone="watch", sources=[AVP_NAME])
+            return BriefLine(label, "평소 패턴을 벗어난 시간은 없습니다.", sources=[PAT])
+        return BriefLine(label, f"평소 패턴을 벗어난 시간 {k_s} ({k_detail}) — 해당 시각 운전 기록 확인 대상입니다.",
+                         tone="watch", sources=[PAT])
 
     if audience == EXECUTIVE:
         # 기획서 7(AI 역할 3): 경영진 = 총 비용 · 증감 · 주요 위험, 5줄 이내 + 기준·한계
@@ -325,8 +341,10 @@ def build_briefing(
             mom_s = NO_DATA
             mom_line = BriefLine("증감", NO_DATA, sources=[HOURLY_FULL])
             act_text = "감축 검토 대상은 데이터에 없음"
-        n_watch = len(watch)
-        headline = [("총 비용", bill_s), ("전월 대비(일평균)", mom_s), ("주의 설비", f"{n_watch}대" if "error" not in status else NO_DATA)]
+        n_watch = (sum(1 for r in status["modules"] if r.get("status") in ("주의", "이상"))
+                   if "error" not in status and config.STATUS_THRESHOLDS_APPROVED else len(watch))
+        n_watch_s = calc.add("점검 설비 수", f"{n_watch}대", STAT) if "error" not in status else NO_DATA
+        headline = [("총 비용", bill_s), ("전월 대비(일평균)", mom_s), ("점검 설비", n_watch_s)]
         risk = watch_line("주요 위험")
         if watch:
             risk = BriefLine("주요 위험", "이상 징후가 반복 관찰되는 설비입니다 (관찰 기록, 설비 판정 아님).",
@@ -365,7 +383,7 @@ def build_briefing(
         else:
             lines.append(BriefLine("요금 최고 시간대", NO_DATA, sources=[PRED]))
             lines.append(BriefLine("일별 최고·최저", NO_DATA, sources=[PRED]))
-        lines.append(interval_line("구간 이탈"))
+        lines.append(interval_line("이상 6종"))
         # selected model vs best baseline (selection json + evaluation baseline table)
         base = [r for r in evaluation.get("baseline_comparison", []) if r.get("kind") == "baseline"] if "error" not in evaluation else []
         sel_name = (selection or {}).get("selected_model")
@@ -385,51 +403,33 @@ def build_briefing(
         else:
             lines.append(BriefLine("모델 비교", NO_DATA, sources=[SELECTION_NAME]))
         lines.append(BriefLine("예측 정확도", f"시간당 오차(MAE) {mae_s}, 평균 전력의 {err_s}입니다." if err_s != NO_DATA else NO_DATA, sources=[EVAL, PRED]))
-    else:  # FACILITY
-        ev_total = int(events.get("count", 0)) if events_ok else None
-        ev_s = calc.add("기간 이상 행수", fmt.fmt_count(ev_total), EV) if ev_total is not None else NO_DATA
-        n_mod = len([r for r in status["modules"] if int(r.get("anomaly_count", 0) or 0) > 0]) if "error" not in status else None
-        mod_s = calc.add("이상 기록 설비 수", f"{n_mod}대", STAT) if n_mod is not None else NO_DATA
-        headline = [("기간 이상 행수", ev_s), ("이상 기록 설비", mod_s), ("예측구간 이탈", k_s)]
-        if watch:
-            lines.append(BriefLine("이상 비율 상위", "설비별 이상 비율과 최근 관측입니다 (관찰 기록).", tone="watch",
-                                   sources=[STAT], chips=watch_chips))
-            recent = []
-            for m, _, last in watch[:3]:
-                recent.append(f"{m} {calc.add('최근 관측 ' + m, fmt.fmt_time(last), STAT)}")
-            lines.append(BriefLine("최근 발생", " · ".join(recent), sources=[STAT]))
+    else:  # FACILITY — 10/16 피드백: 급변(이상 6종) 기준, 5초 기준 미달 원본은 쓰지 않음
+        rows_s = status.get("modules", []) if "error" not in status else []
+        n_alert = sum(1 for r in rows_s if r.get("status") == "이상")
+        n_watch_f = sum(1 for r in rows_s if r.get("status") == "주의")
+        a_s = calc.add("이상 설비", f"{n_alert}대", STAT) if rows_s else NO_DATA
+        w_s = calc.add("주의 설비", f"{n_watch_f}대", STAT) if rows_s else NO_DATA
+        headline = [("이상 6종 탐지", k_s), ("이상 설비", a_s), ("주의 설비", w_s)]
+        lines.append(watch_line("점검 우선"))
+        lines.append(BriefLine("유형별 건수", k_detail if p_ok and k_detail else NO_DATA, sources=[PAT]))
+        if p_ok and pattern["events"]:
+            recent = sorted(pattern["events"], key=lambda e: str(e["hour"]), reverse=True)[:3]
+            txt = " · ".join(
+                f"{e['module']} {tools_mod_type_label(e['type'])} {calc.add('탐지 시각 ' + e['module'] + str(i), str(e['hour'])[5:13] + '시', PAT)}"
+                for i, e in enumerate(recent))
+            lines.append(BriefLine("최근 탐지", txt, sources=[PAT]))
         else:
-            lines.append(watch_line())
-            lines.append(BriefLine("최근 발생", NO_DATA if "error" in status else "최근 관측된 이상 기록이 없습니다.", sources=[STAT]))
-        if events_ok:
-            tcount: dict[str, int] = {}
-            for ev in events.get("events", []):
-                tcount[ev["type"]] = tcount.get(ev["type"], 0) + 1
-            parts = [f"{config.ANOMALY_TYPE_LABELS.get(t, t)} {calc.add('유형 ' + t, fmt.fmt_count(c) + '건', EV)}"
-                     for t, c in sorted(tcount.items(), key=lambda kv: -kv[1])]
-            lines.append(BriefLine("유형별 건수", " · ".join(parts) if parts else "기록된 이상 유형이 없습니다.", sources=[EV]))
-        else:
-            lines.append(BriefLine("유형별 건수", NO_DATA, sources=[EV]))
-        surge = _recent_surge(trend)
-        if "error" in trend:
-            lines.append(BriefLine("최근 7일", NO_DATA, sources=[HOURLY]))
-        elif surge:
-            txt = " · ".join(f"{m} 평소 대비 {calc.add('급증 ' + m, f'{r:.1f}배', HOURLY)}" for m, r in surge)
-            lines.append(BriefLine("최근 7일", txt, tone="watch", sources=[HOURLY]))
-        else:
-            lines.append(BriefLine("최근 7일", "평소 대비 급증한 설비는 없습니다.", sources=[HOURLY]))
-        top = watch[0][0] if watch else "상위 설비"
+            lines.append(BriefLine("최근 탐지", NO_DATA if not p_ok else "탐지된 급변이 없습니다.", sources=[PAT]))
+        top = watch[0][0] if watch else "점검 우선 설비"
         lines.append(BriefLine(
             "현장 확인",
-            f"{top}의 전압·역률 기록과 부하 상태를 현장에서 확인해 주세요(확인 필요, 원인 단정 아님).",
-            tone="watch", sources=[STAT]))
-        v_s = calc.add("전압 임계값", f"{config.VOLTAGE_THRESHOLD:g}V", "config")
-        pf_s = calc.add("역률 임계값", f"{config.POWER_FACTOR_THRESHOLD:g}%", "config")
+            f"{top}의 탐지 시각 운전 일지와 상별 전류·역률 기록을 대조해 주세요(확인 필요, 원인 단정 아님).",
+            tone="watch", sources=[PAT]))
+        k_txt = calc.add("탐지 기준", f"{config.DEFAULT_ANOMALY_K:g}σ", "config")
         lines.append(BriefLine(
-            "현장 확인",
-            f"전압 {v_s} 미만 또는 역률 {pf_s} 미만이 반복된 시간대의 운전 상황을 확인해 주세요.",
-            tone="watch", sources=[EV]))
-        lines.append(interval_line("구간 이탈"))
+            "판정 기준",
+            f"설비별 전체 평균 ±{k_txt} 밖이면서 직전 시간 대비 급변한 시간만 이상으로 봅니다.",
+            sources=[PAT]))
 
     limits = [
         "예측은 공장 전체 단위이며 설비별 예측은 아닙니다.",

@@ -34,7 +34,7 @@ H_LOW = 360
 METRIC_OPTIONS = ["요금", "탄소", "전력량"]
 _METRIC_KEY = {"요금": "bill", "탄소": "carbon", "전력량": "pow"}
 
-UNIT_DESC = {"시간": "전체 기간 · 1시간 단위", "일": "선택 날짜 · 시간별", "주": "선택 주 · 시간별", "월": "일 합계"}
+UNIT_DESC = {"시간": "24시간 · 1시간 단위", "일": "선택 날짜 · 시간별", "주": "선택 주 · 시간별", "월": "일 합계"}
 CARBON_UNIT_NOTE = "탄소 = kWh × 0.424 kgCO₂ (교안 기준)"
 
 
@@ -58,8 +58,15 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> None:
     unit = ctx["gran"]
     # 예측 그래프에서 고른 날짜/주가 KPI 기간이 된다(시간·월은 헤더 기간 전체).
     options, picked = _picked_period(st, rows, unit, start, end)
-    k_start, k_end = page_logic.period_bounds(unit, picked["key"]) if picked else (start, end)
-    totals = page_logic.scaled_totals(rows, settings, start=k_start, end=k_end)
+    if picked and unit == "시간":
+        k_rows = picked["window"]
+        k_start = page_logic._row_dt(k_rows[0]["id"]).date() if k_rows else start
+        k_end = page_logic._row_dt(k_rows[-1]["id"]).date() if k_rows else end
+        totals = page_logic.scaled_totals(k_rows, settings)
+    else:
+        k_rows = rows
+        k_start, k_end = page_logic.period_bounds(unit, picked["key"]) if picked else (start, end)
+        totals = page_logic.scaled_totals(rows, settings, start=k_start, end=k_end)
     buckets = page_logic.resample_rows(
         rows, unit, ("pred_pow", "pred_carbon"), start=start, end=end
     )
@@ -67,11 +74,14 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> None:
         "label": picked["label"] if picked else "선택 기간 전체",
         "alerts": page_logic.build_alerts(
             bundle["actual_vs_pred"], bundle["forecast"], bundle["trend"], settings,
-            start=k_start, end=k_end,
+            start=k_start, end=k_end, pattern=ctx.get("pattern"),
         ),
-        "delta": _prev_period_delta(rows, unit, options, picked, settings) if picked else None,
+        "delta": (_prev_window_delta(rows, picked) if unit == "시간"
+                  else _prev_period_delta(rows, unit, options, picked, settings)) if picked else None,
+        "peak": _peak_hour(k_rows, None, None) if unit == "시간" else _peak_hour(rows, k_start, k_end),
         "anomaly_exp": page_logic.anomaly_expected(
-            (bundle.get("anomaly_hourly_frame") or {}).get("frame"), rows, start=k_start, end=k_end,
+            (bundle.get("anomaly_hourly_frame") or {}).get("frame"), k_rows,
+            start=None if unit == "시간" else k_start, end=None if unit == "시간" else k_end,
         ),
     }
     profile = page_logic.role_profile(ctx.get("role", config.DEFAULT_ROLE))
@@ -105,7 +115,7 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> None:
         with left:
             _render_models(st, bundle)
         with right:
-            _render_profile(st, rows, settings, forecast_ok, bundle.get("actual_vs_pred", {}))
+            _render_profile(st, rows, settings, forecast_ok)
 
 
 # ---------------------------------------------------------------------------
@@ -181,11 +191,11 @@ def _render_strip(st, alerts: dict[str, Any]) -> None:
     errors = bool(alerts["errors"])
     html = components.alert_strip(
         alerts["count"],
-        interval_count=alerts["interval_count"],
-        surge_count=alerts["surge_count"],
+        surge_count=0,
+        pattern_count=alerts.get("pattern_count", 0),
         error=errors,
     )
-    if alerts["surge_count"] and not errors:
+    if alerts.get("pattern_count") and not errors:
         c1, c2 = st.columns([12, 1.4], vertical_alignment="center")
         c1.markdown(html, unsafe_allow_html=True)
         c2.button(
@@ -200,6 +210,21 @@ def _picked_period(st, rows, unit, start, end):
     """날짜(일)/주 선택지와 현재 선택. 위젯은 예측 패널에 있지만 KPI가 먼저 그려지므로
     session_state 값으로 미리 결정한다(첫 실행이면 첫 완전 구간)."""
 
+    if unit == "시간":
+        # 시간: 날짜 + 시작 시각을 골라 24시간 창(자정을 넘어갈 수 있음)
+        options = page_logic.period_options(rows, "일", start=start, end=end)
+        if not options:
+            return options, None
+        labels = [o["label"] for o in options]
+        cur = st.session_state.get("home_pick_시간")
+        day = options[labels.index(cur)] if cur in labels else options[0]
+        hour = int(st.session_state.get("home_hour", 0) or 0)
+        from datetime import datetime as _dt
+
+        t0 = _dt.fromisoformat(day["key"]).replace(hour=hour)
+        win = page_logic.window_rows(rows, t0, 24)
+        label = f"{t0:%m-%d %H시}부터 24시간" + (f" · {len(win)}시간" if len(win) < 24 else "")
+        return options, {**day, "hour": hour, "start_dt": t0, "window": win, "label": label}
     options = page_logic.period_options(rows, unit, start=start, end=end)
     if not options:
         return options, None
@@ -208,6 +233,40 @@ def _picked_period(st, rows, unit, start, end):
     if cur in labels:
         return options, options[labels.index(cur)]
     return options, options[next((i for i, o in enumerate(options) if not o["partial"]), 0)]
+
+
+def _watch_modules(pattern) -> int:
+    from collections import Counter
+
+    c = Counter(e["module"] for e in (pattern or {}).get("events", []))
+    return sum(1 for n in c.values() if n >= config.STATUS_WATCH_PATTERN_COUNT)
+
+
+def _peak_hour(rows, start, end):
+    """선택 기간에서 예측 전력량이 가장 큰 시각."""
+
+    s, e = page_logic.to_date(start), page_logic.to_date(end)
+    best = None
+    for r in rows:
+        m = page_logic._row_dt(r["id"])
+        if m is None or not page_logic._in_range(m.date(), s, e):
+            continue
+        if best is None or r["pred_pow"] > best[1]:
+            best = (m, r["pred_pow"])
+    return {"time": best[0].strftime("%m-%d %H시"), "pow": best[1]} if best else None
+
+
+def _prev_window_delta(rows, picked) -> float | None:
+    """24시간 창 vs 바로 앞 24시간 예측 전력량 변화율(%)."""
+
+    from datetime import timedelta as _td
+
+    cur = picked["window"]
+    prev = page_logic.window_rows(rows, picked["start_dt"] - _td(hours=24), 24)
+    if len(cur) < 24 or len(prev) < 24:
+        return None
+    a, b = sum(r["pred_pow"] for r in cur), sum(r["pred_pow"] for r in prev)
+    return (a - b) / b * 100 if b else None
 
 
 def _prev_period_delta(rows, unit, options, picked, settings) -> float | None:
@@ -285,11 +344,12 @@ def _render_kpis(st, bundle, ctx, forecast_ok, totals, buckets, unit, profile, k
             sub=(f"505 기준 {fmt.fmt_mae(mae.get('mae505'))} Wh · 시간당 평균 오차" if mae_ok else "evaluation.json 없음"),
             icon_name="target", tone="accuracy",
         ),
-        "interval": components.kpi_tile(
-            "예측구간 이탈",
-            f"{alerts['interval_count']}시간" if not alerts["errors"] else dash,
-            sub=f"{kpi['label']} · 실제값이 P5–P95 밖 (잠정)", icon_name="alert_sq",
-        ),
+        "peak": (lambda pk: components.kpi_tile(
+            "예측 최대 시간", pk["time"] if pk else dash,
+            unit="",
+            sub=(f"{kpi['label']} · {fmt.fmt_full(pk['pow'], 'pow')}" if pk else "예측 데이터 없음"),
+            icon_name="clock", tone="power",
+        ))(kpi.get("peak")),
         "events": components.kpi_tile(
             "예상 이상 행수", f"≈{fmt.fmt_count(round(exp['expected']))}",
             sub=f"5월 기록 없음 · {hist} 같은 요일·시각 평균",
@@ -301,6 +361,16 @@ def _render_kpis(st, bundle, ctx, forecast_ok, totals, buckets, unit, profile, k
         "surge": components.kpi_tile(
             "이상 급증 설비", f"{alerts['surge_count']}대" if not alerts["errors"] else dash,
             sub=f"{hist} 관측 · 평소의 {settings['anomaly_surge_factor']:g}배 이상", icon_name="pulse",
+        ),
+        "sudden": components.kpi_tile(
+            "이상 탐지(급변)", f"{len((ctx.get('pattern') or {}).get('events', []))}건",
+            sub=f"{hist} · 평균 ±{float(settings['anomaly_k']):g}σ 밖 + 급격한 변화",
+            icon_name="anomaly", tone="anomaly",
+        ),
+        "watchmods": components.kpi_tile(
+            "점검 필요 설비", f"{_watch_modules(ctx.get('pattern'))}대",
+            sub=f"급변 {config.STATUS_WATCH_PATTERN_COUNT}건 이상 설비 (이상 ≥ {config.STATUS_ALERT_PATTERN_COUNT}건)",
+            icon_name="alert_sq",
         ),
         "found": components.kpi_tile(
             "발견 설비",
@@ -345,7 +415,15 @@ def _render_chart(st, bundle, ctx, rows, profile, options=None, picked=None) -> 
         with head_r:
             c_pick, c_metric, c_info = st.columns([4, 4, 1], vertical_alignment="center")
             with c_pick:
-                if options:
+                if options and unit == "시간":
+                    labels = [o["label"] for o in options]
+                    p_day, p_hour = st.columns([3, 2])
+                    cur_day = next((i for i, o in enumerate(options) if o["key"] == picked["key"]), 0)
+                    p_day.selectbox("날짜", labels, index=cur_day, key="home_pick_시간",
+                                    label_visibility="collapsed")
+                    p_hour.selectbox("시작 시각", list(range(24)), index=picked["hour"], key="home_hour",
+                                     format_func=lambda h: f"{h:02d}시부터", label_visibility="collapsed")
+                elif options:
                     labels = [o["label"] for o in options]
                     choice = st.selectbox(
                         "날짜" if unit == "일" else "주", labels, index=options.index(picked),
@@ -361,7 +439,7 @@ def _render_chart(st, bundle, ctx, rows, profile, options=None, picked=None) -> 
                 with st.popover(":material/info:"):
                     st.markdown(
                         "- 상단 시간/일/주/월 선택에 따라 그래프 단위가 바뀜\n"
-                        "- 일: 날짜를 고르면 그 날 0–23시 · 주: 주를 고르면 그 주 시간별\n"
+                        "- 시간: 날짜·시작 시각부터 24시간 · 일: 그 날 0–23시 · 주: 그 주 시간별 · 월: 일 합계\n"
                         "- 예측값만 표시(5월 실제값과의 비교는 표시하지 않음)\n"
                         "- 요금=전력량×단가, 탄소=전력량×배출계수라 세 지표의 모양은 같고 축만 다름"
                     )
@@ -383,9 +461,8 @@ def _render_chart(st, bundle, ctx, rows, profile, options=None, picked=None) -> 
                 st.markdown(components.empty_state("선택 기간에 예측 데이터 없음"), unsafe_allow_html=True)
                 return
             sel = page_logic.rows_in_period(rows, unit, picked["key"], start=start, end=end)
-        else:
-            sel = [r for r in rows if page_logic._in_range(
-                page_logic._row_dt(r["id"]).date(), page_logic.to_date(start), page_logic.to_date(end))]
+        else:  # 시간: 고른 시각부터 24시간
+            sel = picked["window"] if picked else []
         if not sel:
             st.markdown(components.empty_state("선택 기간에 예측 데이터 없음"), unsafe_allow_html=True)
             return
@@ -404,6 +481,8 @@ def _render_chart(st, bundle, ctx, rows, profile, options=None, picked=None) -> 
         )
         if unit == "일":
             fig.update_xaxes(tickformat="%H시", dtick=3 * 3600 * 1000, title="")
+        elif unit == "시간":
+            fig.update_xaxes(tickformat="%d일 %H시", dtick=2 * 3600 * 1000, title="")
         elif unit == "주":
             fig.update_xaxes(tickformat="%m-%d", dtick=24 * 3600 * 1000, title="")
         st.plotly_chart(fig, width="stretch", config=charts.PLOTLY_CONFIG)
@@ -450,7 +529,7 @@ def _merge_rows(rows: list[dict[str, Any]], avp: dict[str, Any]) -> list[dict[st
 def _render_alert_panel(st, alerts: dict[str, Any]) -> None:
     with components.panel(height=H_MAIN, key=PANEL_ALERTS):
         st.markdown(
-            components.panel_header("경고 목록", icon_name="bell", desc="예측치 기반"),
+            components.panel_header("경고 목록", icon_name="bell", desc="이상 6종 · 급증"),
             unsafe_allow_html=True,
         )
         if alerts["errors"]:
@@ -462,13 +541,15 @@ def _render_alert_panel(st, alerts: dict[str, Any]) -> None:
         if not alerts["items"]:
             st.markdown('<div class="fec-calm">해당 기간 경고 없음</div>', unsafe_allow_html=True)
             return
-        for it in alerts["items"]:
-            st.markdown(
-                components.alert_row(it["level"], it["title"], it["evidence"], it["time"]),
-                unsafe_allow_html=True,
-            )
-        if alerts["interval_count"] > 20:
-            st.caption(f"예측구간 이탈 {alerts['interval_count']}시간 중 편차 큰 20건만 표시")
+        st.caption(f"총 {len(alerts['items'])}건 · 이상 6종(급변) 최근 것부터 · 패널 안에서 스크롤")
+        # 수십 건을 st.markdown 하나씩 그리면 요소가 그만큼 늘어 느려진다 → 한 블록으로.
+        st.markdown(
+            "".join(
+                components.alert_row(it["level"], it["title"], it["evidence"], it["time"])
+                for it in alerts["items"]
+            ),
+            unsafe_allow_html=True,
+        )
 
 
 def _render_period_view(st, rows, unit, start, end, metric, rate, actual_rows=None) -> None:
@@ -689,21 +770,31 @@ def _render_models(st, bundle) -> None:
                 components.error_state(artifact=tools_mod.EVALUATION_NAME), unsafe_allow_html=True
             )
             return
-        selected = ui_logic.selected_baseline_model(evaluation)
+        sel = bundle.get("selection") or {}
+        selected = sel.get("selected_model") if "error" not in sel else ui_logic.selected_baseline_model(evaluation)
+        comp = evaluation["baseline_comparison"]
+        has_may = any("may_mae" in r for r in comp)
         rows, hl = [], set()
-        for i, row in enumerate(evaluation["baseline_comparison"]):
+        for i, row in enumerate(sorted(comp, key=lambda r: r.get("may_mae", r.get("validation_mae", 0)))):
             name = row.get("model", "")
             if name == selected:
                 hl.add(i)
-            rows.append([("● " if name == selected else "") + name, row.get("kind", ""), fmt.fmt_mae(row.get("validation_mae"))])
-        st.markdown(components.html_table(["모델", "종류", "검증 MAE"], rows, highlight_rows=hl), unsafe_allow_html=True)
-        st.caption(f"선택 모델: {selected or tools_mod.NO_DATA} · MAE 73/89는 참고용(합격 기준 아님)")
+            label = page_logic.MODEL_LABELS.get(name, name)
+            kind = "기준" if row.get("kind") == "baseline" else "후보"
+            cells = [("● " if name == selected else "") + label, kind, fmt.fmt_mae(row.get("validation_mae"))]
+            if has_may:
+                cells.append(fmt.fmt_mae(row.get("may_mae")))
+            rows.append(cells)
+        heads = ["모델", "종류", "과거 검증 MAE"] + (["5월 MAE"] if has_may else [])
+        st.markdown(components.html_table(heads, rows, highlight_rows=hl), unsafe_allow_html=True)
+        st.caption(f"선정 모델: {page_logic.MODEL_LABELS.get(selected, selected) or tools_mod.NO_DATA} · "
+                   "MAE 단위 Wh · 73/89는 참고용(합격 기준 아님)")
 
 
 def _render_profile(st, rows, settings, forecast_ok, avp=None) -> None:
     with components.panel(height=H_LOW, key=PANEL_PROFILE):
         st.markdown(
-            components.panel_header("시간대 프로파일", icon_name="clock", desc="0–23시 평균 전력량 · 예측 vs 실제"),
+            components.panel_header("시간대 프로파일", icon_name="clock", desc="0–23시 평균 예측 전력량"),
             unsafe_allow_html=True,
         )
         if not forecast_ok:

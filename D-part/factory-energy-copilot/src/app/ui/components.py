@@ -175,12 +175,11 @@ def llm_status_chip(connected: bool) -> str:
     return '<span class="fec-llm fec-llm-off">○ 대체 모드: 규칙 기반 요약</span>'
 
 
-def period_chip(start: str, end: str, *, mode: str = "검증 모드") -> str:
-    """Data-basis period chip (A-3/D1). Validation-mode wording only."""
+def period_chip(start: str, end: str, *, mode: str = "") -> str:
+    """Data-basis period chip (A-3/D1)."""
 
-    return (
-        f'<span class="fec-chip">분석 기간 {_esc(start)} ~ {_esc(end)} · {_esc(mode)}</span>'
-    )
+    tail = f" · {_esc(mode)}" if mode else ""
+    return f'<span class="fec-chip">분석 기간 {_esc(start)} ~ {_esc(end)}{tail}</span>'
 
 
 def source_chip(label: str, *, found: bool = True) -> str:
@@ -377,7 +376,8 @@ def kpi_tile(
 
 
 def alert_strip(
-    total: int, *, interval_count: int = 0, surge_count: int = 0, error: bool = False
+    total: int, *, interval_count: int = 0, surge_count: int = 0, pattern_count: int = 0,
+    error: bool = False,
 ) -> str:
     """Warning summary strip (v4 §2.3). Error/empty/active are three distinct states."""
 
@@ -395,6 +395,8 @@ def alert_strip(
     parts = []
     if interval_count:
         parts.append(f"예측구간 이탈 {interval_count}시간")
+    if pattern_count:
+        parts.append(f"이상 6종 탐지 {pattern_count}건")
     if surge_count:
         parts.append(f"이상 급증 설비 {surge_count}대")
     if not parts:

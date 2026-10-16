@@ -20,7 +20,6 @@ COPY_FILES = [
 # removed artifact -> (page that must show the error state, text that must NOT appear there)
 CASES = {
     "predictions.csv": ("홈", None),
-    "actual_vs_pred.csv": ("홈", None),
     "evaluation.json": ("홈", None),
     "module_status.csv": ("이상치 모니터링", "13 / 13"),
     "anomaly_events.parquet": ("이상치 모니터링", "64,934"),
@@ -75,7 +74,8 @@ def test_other_pages_survive_a_missing_artifact(monkeypatch, tmp_path, missing):
 
 
 def test_error_alert_strip_withholds_summary_numbers(monkeypatch, tmp_path):
-    at = _run(monkeypatch, tmp_path, "actual_vs_pred.csv", "홈")
+    # actual_vs_pred.csv(5월 실제값)는 발표용 화면에서 쓰지 않는다 → 예측 파일로 확인
+    at = _run(monkeypatch, tmp_path, "predictions.csv", "홈")
     text = _page_text(at)
     assert "경고 없음" not in text
     assert "불러오지 못함" in text

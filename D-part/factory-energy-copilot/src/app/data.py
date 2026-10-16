@@ -140,7 +140,17 @@ def load_bundle(artifacts_dir: Path | None = None) -> dict[str, Any]:
     if "frame" in mh and "hourly_pow" in mh["frame"].columns:  # Wh → kWh (교안 단위)
         mh["frame"] = mh["frame"].assign(hourly_pow=mh["frame"]["hourly_pow"] / config.WH_PER_KWH)
     bundle["quality"] = _load_parquet_frame(QUALITY_NAME, artifacts_dir)
-    bundle["selection"] = _load_json(SELECTION_NAME, artifacts_dir)
+    bundle["selection"] = tools_mod.get_selection(artifacts_dir=artifacts_dir)
+    bundle["pattern"] = tools_mod.get_pattern_anomalies(artifacts_dir=artifacts_dir)
+    bundle["features_hourly"] = _load_parquet_frame("module_hourly_features.parquet", artifacts_dir)
+    bundle["minute_recent"] = _load_parquet_frame("module_minute_recent.parquet", artifacts_dir)
+    fh = bundle["features_hourly"]
+    if "error" in bundle["quality"] and "frame" in fh:
+        # 3상 품질 지표: 원본 집계 특징(module_hourly_features)에서 바로 만든다
+        bundle["quality"] = {"frame": fh["frame"].rename(columns={
+            "pf_r": "pf_mean_R", "pf_s": "pf_mean_S", "pf_t": "pf_mean_T",
+            "current_unbalance": "current_unbalance_pct", "reactive_power": "reactive_mean",
+        })}
     bundle["source_meta"] = _load_json("source_meta.json", artifacts_dir)
     bundle["aggregate_run"] = _load_json("aggregate_run.json", artifacts_dir)
     # 탐지 시간대 패널(3-뷰)이 쓰는 anomaly_hourly DataFrame. trend(dict, points 리스트)는
@@ -160,7 +170,9 @@ def load_bundle(artifacts_dir: Path | None = None) -> dict[str, Any]:
 
 
 _SIGNATURE_FILES = (
-    "predictions.csv", "forecast_bpart.csv", "forecast_bpart_meta.json", "evaluation.json", "module_status.csv", "anomaly_events.parquet",
+    "predictions.csv", "forecast_bpart.csv", "forecast_bpart_meta.json", "evaluation.json",
+    "evaluation_bpart.json", "model_selection_bpart.json", "pattern_anomalies.parquet",
+    "module_hourly_features.parquet", "module_minute_recent.parquet", "module_status.csv", "anomaly_events.parquet",
     "anomaly_hourly.parquet", ACTUAL_VS_PRED_NAME, HOURLY_MODULES_NAME, REBUILD_META_NAME,
     SELECTION_NAME,
 )
@@ -180,6 +192,43 @@ def _artifacts_signature(artifacts_dir: Path | None) -> tuple:
     return tuple(sig)
 
 
+DISK_CACHE_DIR = config.PROJECT_ROOT / ".cache"  # .gitignore 대상
+
+
+def _disk_cached_bundle(root: Path | None, signature: tuple) -> dict[str, Any]:
+    """서버를 다시 켤 때마다 parquet 6.5만 행을 dict로 바꾸는 데 수 초가 걸린다.
+    한 번 만든 번들을 artifacts 지문(파일명·수정시각·크기)별 pickle로 저장해 두고,
+    지문이 같으면 그대로 읽는다(약 0.2초). artifacts가 바뀌면 지문이 달라져 새로 만든다.
+    캐시는 이 앱이 직접 쓴 파일만 읽는다(외부 pickle 로드 금지)."""
+
+    import hashlib
+    import pickle
+
+    key = hashlib.sha1(repr((str(root), signature)).encode("utf-8")).hexdigest()[:16]
+    path = DISK_CACHE_DIR / f"bundle_{key}.pkl"
+    try:
+        if path.exists():
+            with path.open("rb") as fh:
+                return pickle.load(fh)
+    except Exception:  # noqa: BLE001 - corrupt cache -> rebuild
+        pass
+    bundle = load_bundle(root)
+    try:
+        DISK_CACHE_DIR.mkdir(exist_ok=True)
+        for old in DISK_CACHE_DIR.glob("bundle_*.pkl"):
+            try:
+                old.unlink()
+            except OSError:
+                pass
+        tmp = path.with_suffix(".tmp")
+        with tmp.open("wb") as fh:
+            pickle.dump(bundle, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        tmp.replace(path)
+    except Exception:  # noqa: BLE001 - cache is best-effort
+        pass
+    return bundle
+
+
 @functools.lru_cache(maxsize=1)
 def _cached_loader():
     """모듈 수준에서 한 번만 만드는 캐시 함수.
@@ -193,9 +242,9 @@ def _cached_loader():
     import streamlit as st
 
     @st.cache_resource(show_spinner="artifacts 불러오는 중…", max_entries=2)
-    def _cached(dir_str: str | None, signature: tuple) -> dict[str, Any]:  # noqa: ARG001
+    def _cached(dir_str: str | None, signature: tuple) -> dict[str, Any]:
         root = Path(dir_str) if dir_str else None
-        return load_bundle(root)
+        return _disk_cached_bundle(root, signature)
 
     return _cached
 

@@ -54,7 +54,7 @@ ROLE_PROFILES: dict[str, dict[str, Any]] = {
     ROLE_FACILITY: {
         "pages": [PAGE_HOME, PAGE_ANOMALY, PAGE_EQUIPMENT, PAGE_COPILOT, PAGE_SETTINGS],
         "audience": "facility",
-        "kpis": ["pow", "interval", "events", "surge", "found"],
+        "kpis": ["pow", "peak", "sudden", "watchmods", "found"],
         "home_row3": ["period", "top_modules", "report"],
         "home_detail": False,
         "metric": "전력량",
@@ -125,6 +125,7 @@ def default_settings() -> dict[str, Any]:
         "alert_interval": True,
         "bill_surge_pct": float(config.DEFAULT_BILL_SURGE_PCT),
         "anomaly_surge_factor": float(config.DEFAULT_ANOMALY_SURGE_FACTOR),
+        "anomaly_k": float(config.DEFAULT_ANOMALY_K),
         "night_start": int(config.DEFAULT_NIGHT_START_HOUR),
         "night_end": int(config.DEFAULT_NIGHT_END_HOUR),
     }
@@ -304,6 +305,11 @@ def carbon_cost(carbon_total: float, price_per_ton: Any) -> float | None:
 # 경고 목록 제목 = 경고 유형(멘토링 피드백 6종 이름). 6종에 대응하지 않는 원천 유형은 원래 이름.
 #   예측범위 이탈·요금 급증 → 비정상 패턴(사용량이 평소/예측 패턴을 벗어남)
 #   3상 저역률 이벤트 급증 → 역률 급감 / 3상 저전압은 6종에 없음 → '3상 저전압' 그대로
+PATTERN_METRIC = {
+    "active_power": "유효전력", "reactive_power": "무효전력", "current_unbalance": "전류 불평형률",
+    "pf_mean": "평균 역률", "current_mean": "평균 전류",
+}
+
 ALERT_TYPE: dict[str, str] = {
     "interval": config.ANOMALY_TYPE_LABELS["abnormal_pattern"],
     "bill": config.ANOMALY_TYPE_LABELS["abnormal_pattern"],
@@ -327,6 +333,8 @@ def build_alerts(
     *,
     start: Any = None,
     end: Any = None,
+    pattern: dict[str, Any] | None = None,
+    include_surge: bool = False,
 ) -> dict[str, Any]:
     """Alert items + counts for the strip / bell / panel.
 
@@ -340,39 +348,30 @@ def build_alerts(
     errors: list[str] = []
     s, e = to_date(start), to_date(end)
 
+    # 5월 실제값과 비교하는 '예측구간 이탈'은 확인(검증)용이라 경고에서 뺐다.
     interval_count = 0
-    if settings.get("alert_interval", True):
-        if "error" in avp:
-            errors.append("actual_vs_pred.csv")
-        else:
-            outs = []
-            for r in avp.get("rows", []):
-                moment = _row_dt(r["id"])
-                if moment is None or not _in_range(moment.date(), s, e):
-                    continue
-                lo, hi = r.get("pred_low"), r.get("pred_high")
-                if lo is None or hi is None:
-                    continue
-                if r["actual_pow"] > hi:
-                    outs.append((r, "상한 초과", r["actual_pow"] - hi, moment))
-                elif r["actual_pow"] < lo:
-                    outs.append((r, "하한 미달", lo - r["actual_pow"], moment))
-            interval_count = len(outs)
-            for r, direction, gap, moment in sorted(outs, key=lambda x: -x[2])[:20]:
-                bound = r["pred_high"] if direction == "상한 초과" else r["pred_low"]
-                items.append(
-                    {
-                        "level": "warn",
-                        "kind": "interval",
-                        "title": ALERT_TYPE["interval"],
-                        "evidence": (
-                            f"예측범위 {direction} · 실제 {fmt.fmt_pow(r['actual_pow'])} / "
-                            f"경계 {fmt.fmt_pow(bound)} kWh ({fmt.fmt_pow(gap)} 차이)"
-                        ),
-                        "time": moment.strftime("%m-%d %H:%M"),
-                        "sort": moment,
-                    }
-                )
+
+    # 이상 6종(설비×시간 패턴 탐지) — 과거 측정 데이터 기준이라 기간 필터 없이 전부 표시
+    pattern_count = 0
+    if pattern is not None and "error" not in pattern:
+        for ev in pattern.get("events", []):
+            moment = _row_dt(str(ev.get("hour", "")))
+            unit = ev.get("unit", "")
+            base = float(ev.get("baseline") or 0.0)
+            val = float(ev.get("value") or 0.0)
+            diff = (val - base) / base * 100 if base else 0.0
+            items.append({
+                "level": "warn",
+                "kind": "pattern",
+                "title": f"{type_label(ev['type'])} · {ev['module']}",
+                "evidence": (
+                    f"{PATTERN_METRIC.get(ev.get('metric'), ev.get('metric'))} {val:,.1f}{unit} "
+                    f"(평소 {base:,.1f}{unit}, {diff:+.1f}%) · z {float(ev.get('z') or 0):+.1f}"
+                ),
+                "time": moment.strftime("%y-%m-%d %H시") if moment else "",
+                "sort": moment or datetime.min,
+            })
+            pattern_count += 1
 
     if "error" in forecast:
         errors.append("predictions.csv")
@@ -409,7 +408,9 @@ def build_alerts(
         factor = float(settings.get("anomaly_surge_factor", config.DEFAULT_ANOMALY_SURGE_FACTOR))
         surge_modules = ui_logic.surge_warnings(trend, factor=factor)
         dominant = _dominant_type_by_module(trend)
-        for w in surge_modules:
+        # 5초 기준 미달 건수의 급증은 거짓 양성이 많아(10/16 피드백) 경고 목록에서 뺀다.
+        # 이상치 화면의 '탐지 시간대'에서 참고로만 본다.
+        for w in (surge_modules if include_surge else []):
             raw = dominant.get(w["module"], "")
             items.append(
                 {
@@ -423,12 +424,15 @@ def build_alerts(
                 }
             )
 
-    items.sort(key=lambda it: (0 if it["level"] == "alert" else 1, it["sort"]))
+    # 급증(alert) 먼저, 그다음 최근 것부터
+    items.sort(key=lambda it: (0 if it["level"] == "alert" else 1, -it["sort"].timestamp()
+                               if it["sort"] not in (datetime.max, datetime.min) else 0))
     return {
         "items": items,
         "interval_count": interval_count,
         "surge_count": len(surge_modules),
-        "count": len(items) if interval_count <= 20 else interval_count + len(surge_modules),
+        "pattern_count": pattern_count,
+        "count": len(items),
         "errors": errors,
     }
 
@@ -854,6 +858,28 @@ def flow_steps(bundle: dict[str, Any]) -> list[dict[str, str]]:
     best_cand = min((r["validation_mae"] for r in cand), default=None)
     mae = ev.get("mae_hourly_pow") if ok(ev) else None
 
+    if ok(sel) and sel.get("source") == "B-part_전력예측":
+        comp = sel.get("baseline_comparison") or []
+        bases = [r for r in comp if r.get("kind") == "baseline"]
+        cands = [r for r in comp if r.get("kind") == "candidate"]
+        best_b = min(bases, key=lambda r: r["validation_mae"]) if bases else None
+        name = sel.get("selected_model")
+        sel_row = next((r for r in comp if r["model"] == name), None)
+        return [
+            {"no": "1", "title": "원본 데이터", "value": fmt.fmt_count(rows) if rows else dash,
+             "caption": "5초 측정 행 (13개 설비)"},
+            {"no": "2", "title": "시간 집계", "value": fmt.fmt_count(sel.get("refit_row_count") or 3600),
+             "caption": "공장 전체 1시간 전력량(Wh) 시점 수"},
+            {"no": "3", "title": "기준 모델", "value": fmt.fmt_mae(best_b["validation_mae"]) if best_b else dash,
+             "caption": f"{MODEL_LABELS.get(best_b['model'], best_b['model']) if best_b else ''} · 과거 검증 MAE"},
+            {"no": "4", "title": f"후보 {len(cands)}종", "value": fmt.fmt_mae(min(r['validation_mae'] for r in cands)) if cands else dash,
+             "caption": "lag·이동평균 특징 · 최저 과거 검증 MAE"},
+            {"no": "5", "title": "선정 모델", "value": MODEL_LABELS.get(name, name or dash),
+             "caption": "과거 3회 검증 후 전체 기간 재학습"},
+            {"no": "6", "title": "5월 예측", "value": fmt.fmt_mae(sel_row["may_mae"]) if sel_row else dash,
+             "caption": "505시점 MAE (Wh) · 재귀 예측"},
+        ]
+
     return [
         {
             "no": "1", "title": "원본 데이터",
@@ -897,6 +923,14 @@ def flow_steps(bundle: dict[str, Any]) -> list[dict[str, str]]:
 MODEL_LABELS: dict[str, str] = {
     "calendar_linear_regression": "달력 특성 선형회귀",
     "random_forest": "랜덤 포레스트",
+    "lightgbm_reference": "LightGBM",
+    "lightgbm_lags": "LightGBM 보수 설정",
+    "ridge_lags": "Ridge",
+    "xgboost_lags": "XGBoost",
+    "hist_lags": "HistGradientBoosting",
+    "extra_trees_lags": "ExtraTrees",
+    "train_mean": "학습 평균",
+    "train_median": "학습 중앙값",
 }
 
 
@@ -1173,3 +1207,247 @@ def anomaly_reasons(events: list[dict[str, Any]], status_rows: list[dict[str, An
             "first": g["t"].min(), "last": g["t"].max(),
         })
     return sorted(out, key=lambda r: -(r["ratio"] or 0))
+
+
+
+# ---------------------------------------------------------------------------
+# 설정값 저장(새로고침·재시작 후에도 유지). 프로젝트 .cache/settings.json (git 제외)
+# ---------------------------------------------------------------------------
+SETTINGS_FILE = config.PROJECT_ROOT / ".cache" / "settings.json"
+
+
+def load_saved_settings(path=None) -> dict[str, Any] | None:
+    """저장된 설정 중 기본 설정에 있는 키·같은 형식만 돌려준다(없거나 깨지면 None)."""
+
+    import json
+
+    p = path or SETTINGS_FILE
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    base = default_settings()
+    out = {}
+    for k, v in data.items():
+        if k not in base:
+            continue
+        if v is None or isinstance(v, (int, float, bool, str)):
+            out[k] = v
+    return out or None
+
+
+def save_settings(settings: dict[str, Any], path=None) -> bool:
+    import json
+
+    p = path or SETTINGS_FILE
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        base = default_settings()
+        p.write_text(json.dumps({k: settings.get(k) for k in base}, ensure_ascii=False, indent=2),
+                     encoding="utf-8")
+        return True
+    except OSError:
+        return False
+
+
+
+def load_series(bundle: dict[str, Any], module: str, view: str, start: Any = None, end: Any = None) -> dict[str, Any] | None:
+    """설비 부하 패턴 시계열. 최근 1시간(1분 평균) · 최근 24시간(1시간 평균) · 일별(하루 전력량).
+
+    '최근' 기준 = 학습 원본 마지막 측정 시각. 반환: x, y, unit, caption, mean.
+    """
+
+    import pandas as pd
+
+    if view == "최근 1시간":
+        mf = (bundle.get("minute_recent") or {}).get("frame")
+        if mf is None or not len(mf):
+            return None
+        g = mf[mf["module"] == module].sort_values("minute")
+        if not len(g):
+            return None
+        last = g["minute"].max()
+        g = g[g["minute"] > last - pd.Timedelta(minutes=60)]
+        y = (g["active_power"] / 1000.0).tolist()
+        return {"x": g["minute"].dt.strftime("%H:%M").tolist(), "y": y, "unit": "kW",
+                "title": "1분 평균 유효전력", "mean": sum(y) / len(y),
+                "caption": f"{module} · {g['minute'].min():%Y-%m-%d %H:%M} – {last:%H:%M} (원본 마지막 1시간, 1분 평균)"}
+    ff = (bundle.get("features_hourly") or {}).get("frame")
+    if ff is None or not len(ff):
+        return None
+    g = ff[(ff["module"] == module) & (ff["n"] >= 600)].sort_values("hour")
+    if not len(g):
+        return None
+    if view == "최근 24시간":
+        g = g.tail(24)
+        y = (g["active_power"] / 1000.0).tolist()  # 1시간 평균 kW = 그 시간 kWh
+        return {"x": g["hour"].dt.strftime("%m-%d %H시").tolist(), "y": y, "unit": "kWh",
+                "title": "시간별 전력량", "mean": sum(y) / len(y),
+                "caption": f"{module} · {g['hour'].min():%Y-%m-%d %H시} – {g['hour'].max():%m-%d %H시} (원본 마지막 24시간)"}
+    s, e = to_date(start), to_date(end)
+    d = g.assign(day=g["hour"].dt.date)
+    if s:
+        d = d[d["day"] >= s]
+    if e:
+        d = d[d["day"] <= e]
+    daily = d.groupby("day").agg(kwh=("active_power", lambda v: v.sum() / 1000.0), hours=("active_power", "size"))
+    daily = daily[daily["hours"] == 24]
+    if not len(daily):
+        return None
+    y = daily["kwh"].tolist()
+    return {"x": [f"{x:%m-%d}" for x in daily.index], "y": y, "unit": "kWh", "title": "일 전력량",
+            "mean": sum(y) / len(y),
+            "caption": f"{module} · 24시간 모두 측정된 날 {len(y)}일 · 일평균 {sum(y) / len(y):,.1f} kWh"}
+
+
+def status_for_period(
+    status: dict[str, Any],
+    events: dict[str, Any],
+    features: Any,
+    pattern: dict[str, Any] | None,
+    start: Any = None,
+    end: Any = None,
+) -> dict[str, Any]:
+    """설비 상태표를 선택 기간(·유형)에 맞춰 다시 계산한다.
+
+    module_status.csv는 전체 기간 값이라, 헤더 기간을 좁히면 상단 '기간 이상 행수'와
+    표의 건수 합이 어긋난다. events(이미 기간·유형 필터 적용)로 설비별 건수를,
+    module_hourly_features의 측정 행 수(n)로 같은 기간 분모를 구해 비율과 상태를 맞춘다.
+    features가 없으면 비율은 건수 비례로 원래 분모를 유지한다.
+    """
+
+    if "error" in status or "error" in events:
+        return status
+    from src.agent import tools as tools_mod
+
+    s, e = to_date(start), to_date(end)
+    counts: dict[str, int] = {}
+    last: dict[str, str] = {}
+    for ev in events.get("events", []):
+        m = str(ev.get("module"))
+        counts[m] = counts.get(m, 0) + 1
+        t = str(ev.get("localtime") or "")
+        if t > last.get(m, ""):
+            last[m] = t
+    denom: dict[str, float] = {}
+    if features is not None and len(features):
+        f = features
+        day = f["hour"].dt.date
+        mask = True
+        if s:
+            mask = day >= s
+        if e:
+            mask = mask & (day <= e)
+        sub = f[mask] if mask is not True else f
+        denom = sub.groupby("module")["n"].sum().astype(float).to_dict()
+    pat: dict[str, int] = {}
+    for ev in (pattern or {}).get("events", []) if pattern and "error" not in pattern else []:
+        d = _row_dt(str(ev.get("hour", "")))
+        if d is None or not _in_range(d.date(), s, e):
+            continue
+        pat[ev["module"]] = pat.get(ev["module"], 0) + 1
+    rows = []
+    for r in status.get("modules", []):
+        m = r["module"]
+        c = counts.get(m, 0)
+        if denom.get(m):
+            ratio = c / denom[m]
+        else:
+            full = int(r.get("anomaly_count") or 0)
+            ratio = float(r.get("anomaly_ratio") or 0.0) * (c / full) if full else 0.0
+        st_label = r.get("status")
+        if config.STATUS_THRESHOLDS_APPROVED:
+            st_label = tools_mod.module_status_label(ratio, pat.get(m, 0))
+        rows.append({**r, "anomaly_count": c, "anomaly_ratio": ratio,
+                     "last_seen": last.get(m, ""), "status": st_label, "pattern_count": pat.get(m, 0)})
+    return {**status, "modules": rows}
+
+
+def window_rows(rows: list[dict[str, Any]], start_dt: datetime, hours: int = 24) -> list[dict[str, Any]]:
+    """start_dt부터 ``hours``시간의 예측 행(시간순). 날짜 경계를 넘어갈 수 있다."""
+
+    end_dt = start_dt + timedelta(hours=hours)
+    out = [r for r in rows if (m := _row_dt(r.get("id", ""))) is not None and start_dt <= m < end_dt]
+    return sorted(out, key=lambda r: r["id"])
+
+
+# ---------------------------------------------------------------------------
+# 이상 6종 — '전체 평균 기준 범위 + 급격한 변화'만 잡는다 (10/16 멘토 피드백: 거짓 양성 축소)
+# ---------------------------------------------------------------------------
+SUDDEN_RULES = [
+    # type, 지표, 단위, 방향(+1 상승, -1 하락, 0 양쪽), 야간 한정
+    ("abnormal_pattern", "active_power", "W", 0, False),
+    ("night_operation", "active_power", "W", +1, True),
+    ("load_imbalance", "current_unbalance", "%", +1, False),
+    ("reactive_power_surge", "reactive_power", "var", +1, False),
+    ("power_factor_drop", "pf_mean", "%", -1, False),
+    ("current_only_increase", "current_mean", "A", +1, False),
+]
+_SUDDEN_CACHE: dict[tuple, dict[str, Any]] = {}
+
+
+def detect_sudden(features: Any, *, k: float = 3.5, night_hours: set[int] | None = None) -> dict[str, Any]:
+    """설비×시간 특징에서 이상 6종을 탐지한다.
+
+    판정 = 두 조건을 모두 만족하는 시간만:
+      ① 범위 이탈: 그 설비 전체 기간 평균에서 ±k·표준편차 밖
+      ② 급격한 변화: 직전 시간 대비 변화량이 그 설비 변화량 분포의 ±k·표준편차 밖
+    전류만 증가 = 평균 전류가 위 두 조건(상승)이고 같은 시간 유효전력 z < 1.
+    반환: {"count", "events": [...], "k"} (events: module, hour, type, metric, value, baseline, z, jump_z, unit, rule)
+    """
+
+    import numpy as np
+    import pandas as pd
+
+    if features is None or not len(features):
+        return {"error": "no_features"}
+    night = night_hours if night_hours is not None else {22, 23, 0, 1, 2, 3, 4, 5}
+    key = (id(features), len(features), float(k), tuple(sorted(night)))
+    if key in _SUDDEN_CACHE:
+        return _SUDDEN_CACHE[key]
+    f = features[features["n"] >= 600].sort_values(["module", "hour"]).copy()
+    if "current_mean" not in f.columns:
+        f["current_mean"] = f[["current_r", "current_s", "current_t"]].mean(axis=1)
+    g = f.groupby("module")
+    z, zd, mean = {}, {}, {}
+    for col in {r[1] for r in SUDDEN_RULES}:
+        mu, sd = g[col].transform("mean"), g[col].transform("std")
+        mean[col] = mu
+        z[col] = (f[col] - mu) / sd.replace(0, np.nan)
+        d = g[col].diff()
+        dg = d.groupby(f["module"])
+        zd[col] = (d - dg.transform("mean")) / dg.transform("std").replace(0, np.nan)
+    hours = f["hour"].dt.hour
+    events = []
+    for typ, col, unit, sign, night_only in SUDDEN_RULES:
+        a, b = z[col], zd[col]
+        if sign > 0:
+            m = (a >= k) & (b >= k)
+        elif sign < 0:
+            m = (a <= -k) & (b <= -k)
+        else:
+            m = (a.abs() >= k) & (b.abs() >= k)
+        if night_only:
+            # 야간은 가동이 늘면 바로 비용이라 0.5σ 낮춰 본다. 비정상 패턴으로 이미 잡힌 시간은 제외
+            abn = (z["active_power"].abs() >= k) & (zd["active_power"].abs() >= k)
+            m = hours.isin(night) & (a >= k - 0.5) & (b >= k - 0.5) & ~abn
+        if typ == "current_only_increase":
+            m &= z["active_power"] < 1
+        rule = (f"전체 평균 {'+' if sign > 0 else '−' if sign < 0 else '±'}{k:g}σ 밖 + 직전 시간 대비 급변"
+                + (" (야간)" if night_only else ""))
+        for idx in f.index[m.fillna(False)]:
+            events.append({
+                "module": f.at[idx, "module"],
+                "hour": f.at[idx, "hour"].strftime("%Y-%m-%d %H:%M:%S"),
+                "type": typ, "metric": col, "unit": unit,
+                "value": float(f.at[idx, col]), "baseline": float(mean[col][idx]),
+                "z": float(a[idx]), "jump_z": float(b[idx]), "rule": rule,
+            })
+    events.sort(key=lambda e: (e["hour"], e["module"]))
+    out = {"count": len(events), "events": events, "k": float(k)}
+    if len(_SUDDEN_CACHE) > 8:
+        _SUDDEN_CACHE.clear()
+    _SUDDEN_CACHE[key] = out
+    return out

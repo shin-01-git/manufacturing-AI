@@ -60,6 +60,8 @@ def render(
     settings: dict[str, Any] | None = None,
     role: str = config.DEFAULT_ROLE,
     hourly_frame: dict[str, Any] | None = None,
+    pattern: dict[str, Any] | None = None,
+    features: Any = None,
 ) -> None:
     import streamlit as st
 
@@ -111,9 +113,15 @@ def render(
     events = page_logic.filter_events_by_type(events, raw_type)
     trend = page_logic.filter_trend_by_type(trend, raw_type)
 
+    # 상태표·상단 카드가 같은 기간·유형 기준이 되도록 설비별 건수/비율/상태를 다시 계산
+    status = page_logic.status_for_period(
+        status, events, features, pattern,
+        date_range[0] if date_range else None, date_range[1] if date_range else None,
+    )
+    pattern_in_range = _pattern_in_range(pattern, date_range)
     model = ui_logic.anomaly_tab_model(status, events, trend)
 
-    _render_summary(st, status, model)
+    _render_summary(st, status, model, pattern_in_range, raw_type, date_range)
 
     merged_settings = page_logic.merged_settings(settings)
     status_col, heat_col = st.columns([1.65, 1])
@@ -126,6 +134,7 @@ def render(
         )
 
     _render_reasons(st, model)
+    _render_pattern_panel(st, pattern or {"error": "not_found"})
 
     # 경영진 view: summary only (KPI + 상태표 + 타임라인); detail panels are for the
     # facility / energy roles.
@@ -133,13 +142,77 @@ def render(
         st.caption("경영진 보기: 요약만 표시합니다. 이벤트 로그·방법 비교·설비 상세는 담당자 역할에서 확인하세요.")
         return
 
-    method_col, event_col = st.columns([1, 1.6])
-    with method_col:
-        _render_method_comparison(st, rebuild_meta)
-    with event_col:
-        _render_event_log(st, model)
+    # 방법 비교·이벤트 로그(5초 기준 미달 원본 목록)는 거짓 양성 위주라 화면에서 뺐다(10/16 피드백).
 
     _render_drilldown(st, status, trend, selected, artifacts_dir)
+
+
+PATTERN_TYPES = ["abnormal_pattern", "night_operation", "load_imbalance",
+                 "reactive_power_surge", "power_factor_drop", "current_only_increase"]
+PATTERN_RULES = {
+    "abnormal_pattern": "유효전력이 위·아래로 범위 이탈 + 급변",
+    "night_operation": "야간에 유효전력 상승 이탈 + 급변 (0.5σ 완화)",
+    "load_imbalance": "3상 전류 불평형률 상승 이탈 + 급변",
+    "reactive_power_surge": "무효전력 상승 이탈 + 급변",
+    "power_factor_drop": "평균 역률 하락 이탈 + 급변",
+    "current_only_increase": "평균 전류 상승 이탈 + 급변, 유효전력 z < 1",
+}
+
+
+def _render_pattern_panel(st, pattern: dict[str, Any]) -> None:
+    """이상 6종(멘토링 피드백) 탐지 결과: 설비×유형 건수표 + 탐지 목록."""
+
+    with components.panel(key="an_pattern"):
+        head_l, head_r = st.columns([3, 2], vertical_alignment="center")
+        head_l.markdown(
+            components.panel_header("이상 6종 탐지", icon_name="anomaly", tone="anomaly",
+                                    desc="전체 평균 범위 이탈 + 급격한 변화만"),
+            unsafe_allow_html=True,
+        )
+        if "error" in pattern:
+            st.markdown(components.empty_state(tools_mod.PATTERN_NAME), unsafe_allow_html=True)
+            return
+        events = pattern.get("events", [])
+        labels = {t: page_logic.type_label(t) for t in PATTERN_TYPES}
+        pick = head_r.selectbox("유형", ["전체 유형"] + [labels[t] for t in PATTERN_TYPES],
+                                key="pattern_type", label_visibility="collapsed")
+        left, right = st.columns([1.1, 1.6])
+        with left:
+            mods = sorted({e["module"] for e in events}, key=lambda m: -sum(e["module"] == m for e in events))
+            table = []
+            for m in mods:
+                row = {"설비": m}
+                for t in PATTERN_TYPES:
+                    row[labels[t]] = sum(1 for e in events if e["module"] == m and e["type"] == t)
+                row["합계"] = sum(row[labels[t]] for t in PATTERN_TYPES)
+                table.append(row)
+            st.dataframe(table, width="stretch", hide_index=True, height=300)
+            st.caption("판정 기준: " + " · ".join(f"{labels[t]} = {PATTERN_RULES[t]}" for t in PATTERN_TYPES))
+        with right:
+            raw = next((t for t in PATTERN_TYPES if labels[t] == pick), None)
+            sel = [e for e in events if raw is None or e["type"] == raw]
+            sel = sorted(sel, key=lambda e: str(e["hour"]), reverse=True)
+            metric = page_logic.PATTERN_METRIC
+            rows = [
+                {
+                    "시각": str(e["hour"])[:13] + "시",
+                    "설비": e["module"],
+                    "유형": labels.get(e["type"], e["type"]),
+                    "측정": f"{metric.get(e['metric'], e['metric'])} {float(e['value']):,.1f}{e.get('unit', '')}",
+                    "평소": f"{float(e['baseline']):,.1f}{e.get('unit', '')}",
+                    "차이": f"{(float(e['value']) - float(e['baseline'])) / float(e['baseline']) * 100:+.1f}%"
+                    if float(e["baseline"]) else "—",
+                    "z": round(float(e["z"]), 1),
+                    "급변 z": round(float(e.get("jump_z") or 0), 1),
+                }
+                for e in sel
+            ]
+            st.dataframe(rows, width="stretch", hide_index=True, height=300)
+            k = pattern.get("k", config.DEFAULT_ANOMALY_K)
+            st.caption(
+                f"{pick} {len(rows)}건 · 평소 = 그 설비 전체 기간 평균. z = (측정 − 평균) ÷ 표준편차, "
+                f"급변 z = 직전 시간 대비 변화량의 z. 두 값이 모두 ±{k:g}σ를 넘을 때만 이상(설정에서 조정)."
+            )
 
 
 _REASON_CACHE: dict[tuple, list] = {}
@@ -167,8 +240,8 @@ def _render_reasons(st, model: dict[str, Any]) -> None:
     reasons = _cached_reasons(model["events"], model["status_rows"])
     with components.panel(key="an_reasons"):
         st.markdown(
-            components.panel_header("이상 판단 근거", icon_name="anomaly", tone="anomaly",
-                                    desc="설비 상태표 이상 비율의 이유"),
+            components.panel_header("기준 미달 측정 근거", icon_name="anomaly", tone="anomaly",
+                                    desc="5초 순간 기준 미달(참고) — 경고 아님"),
             unsafe_allow_html=True,
         )
         if not reasons:
@@ -197,8 +270,8 @@ def _render_reasons(st, model: dict[str, Any]) -> None:
                     f"- **의미**: {r['rule']}"
                 )
         st.caption(
-            "이상 비율 = 규칙에 걸린 5초 측정 행 ÷ 해당 설비 전체 측정 행. 비율은 1% 안팎이지만 거의 매시간 "
-            "발생해 일시적 사건보다 상시 운전 조건(기준값·설비 특성)을 먼저 확인할 대상입니다. "
+            "이상 비율 = 규칙에 걸린 5초 측정 행 ÷ 해당 설비 전체 측정 행. 거의 매시간 생기는 순간 저하라 "
+            "거짓 양성이 많아 경고·설비 상태에는 쓰지 않습니다(참고). 경고는 '이상 6종 탐지'의 급변만 냅니다. "
             "비지도 탐지(IsolationForest)는 전체의 21.8%를 이상으로 잡는 과탐지라 상태 판단에서 제외."
         )
 
@@ -207,32 +280,42 @@ def _status_approved() -> bool:
     return bool(config.STATUS_THRESHOLDS_APPROVED)
 
 
-def _render_summary(st, status: dict[str, Any], model: dict[str, Any]) -> None:
+def _pattern_in_range(pattern, date_range) -> int | None:
+    if not pattern or "error" in pattern:
+        return None
+    s = page_logic.to_date(date_range[0]) if date_range else None
+    e = page_logic.to_date(date_range[1]) if date_range else None
+    n = 0
+    for ev in pattern.get("events", []):
+        d = page_logic._row_dt(str(ev.get("hour", "")))
+        if d is not None and page_logic._in_range(d.date(), s, e):
+            n += 1
+    return n
+
+
+def _render_summary(st, status, model, pattern_n=None, raw_type=None, date_range=None) -> None:
     summary = ui_logic.discovered_module_summary(status)
     found = summary["count"]
     cap = summary["cap"]
-
-    if _status_approved():
-        watch = sum(1 for r in model["status_rows"] if r["status"] != "정상")
-        watch_text = str(watch)
-    else:
-        watch_text = "기준 미확정"
+    rows = model["status_rows"]
+    n_alert = sum(1 for r in rows if r["status"] == "이상")
+    n_watch = sum(1 for r in rows if r["status"] == "주의")
+    period = (f"{date_range[0]} – {date_range[1]}" if date_range and date_range[0] and date_range[1]
+              else "전체 기간")
 
     cards = [
         components.kpi_tile(
-            "발견 설비", f"{found} / {cap}", sub="O-5 최대 13 상한", compact=True
+            "이상 탐지(급변)", f"{pattern_n}건" if pattern_n is not None else "—",
+            sub=f"{period} · 전체 평균 ±kσ 밖 + 직전 시간 대비 급변", tone="anomaly", compact=True,
         ),
         components.kpi_tile(
-            "기간 이상 행수", fmt.fmt_count(model["event_count"]),
-            sub="anomaly_events 건수 · 관찰 기록", tone="anomaly", compact=True,
-        ),
-        components.kpi_tile(
-            "주의 설비", watch_text,
-            sub="O-3 경계값 미승인 시 '기준 미확정'",
+            "이상 · 주의 설비", f"{n_alert} · {n_watch}" if _status_approved() else "기준 미확정",
+            sub=f"이상: 급변 ≥ {config.STATUS_ALERT_PATTERN_COUNT}건 · 주의: {config.STATUS_WATCH_PATTERN_COUNT}건 이상",
             disabled=not _status_approved(), compact=True,
         ),
+        components.kpi_tile("발견 설비", f"{found} / {cap}", sub="데이터에 기록된 설비 / 최대 13대", compact=True),
     ]
-    for col, card in zip(st.columns(3), cards):
+    for col, card in zip(st.columns(len(cards)), cards):
         col.markdown(card, unsafe_allow_html=True)
     notice = model["module_notice"]
     if notice:
@@ -271,6 +354,7 @@ def _render_status_table(st, model: dict[str, Any], trend: dict[str, Any]) -> st
                     "상태": components.status_text(label, has_record=has_record),
                     "이상 건수": count,
                     "이상 비율": float(r.get("anomaly_ratio", 0.0) or 0.0),
+                    "6종 탐지": int(r.get("pattern_count", 0) or 0),
                     "24h 추세": sparks.get(r["module"], []),
                     "최근 관측": ui_logic.fmt_localtime_short(r.get("last_seen")),
                     "_full_last_seen": r.get("last_seen") or "",

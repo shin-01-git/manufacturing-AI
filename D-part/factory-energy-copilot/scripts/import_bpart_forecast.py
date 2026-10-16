@@ -64,15 +64,56 @@ def main() -> None:
         reader = csv.DictReader(f)
         if name not in reader.fieldnames:
             raise SystemExit(f"predictions.csv에 {name} 열 없음")
-        rows = [(r["id"], float(r[name])) for r in reader]
+        raw = list(reader)
+    rows = [(r["id"], float(r[name])) for r in raw]
+    actual = [float(r["actual"]) for r in raw if r.get("actual") not in (None, "")]
 
     bill_rate, carbon_rate = float(config.BILL_RATE), float(config.CARBON_RATE)
     out.mkdir(parents=True, exist_ok=True)
+    # 예측구간: scripts/bpart_interval.py가 만든 과거 검증 잔차 분위수(있을 때만)
+    iv_path = out / "forecast_bpart_interval.json"
+    iv = json.loads(iv_path.read_text(encoding="utf-8")) if iv_path.exists() else None
     with (out / "forecast_bpart.csv").open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["id", "pred_pow", "pred_bill", "pred_carbon"])
+        w.writerow(["id", "pred_pow", "pred_bill", "pred_carbon", "pred_low", "pred_high"])
         for rid, wh in rows:  # predictions.csv와 같은 Wh 척도(대시보드가 ÷1000)
-            w.writerow([rid, f"{wh:.6f}", f"{wh * bill_rate:.6f}", f"{wh * carbon_rate:.6f}"])
+            lo = f"{max(0.0, wh + iv['q05']):.6f}" if iv else ""
+            hi = f"{wh + iv['q95']:.6f}" if iv else ""
+            w.writerow([rid, f"{wh:.6f}", f"{wh * bill_rate:.6f}", f"{wh * carbon_rate:.6f}", lo, hi])
+
+    # 평가(evaluation.json과 같은 스키마) — 5월 정답과의 MAE
+    def mae(n):
+        pairs = list(zip([v for _, v in rows][:n], actual[:n]))
+        return sum(abs(p - a) for p, a in pairs) / len(pairs) if pairs else None
+
+    m504, m505 = mae(504), mae(505)
+    comparison_rows = [
+        {"model": r["model"], "label": LABELS.get(r["model"], r["model"]),
+         "kind": "baseline" if r["model"] in BASELINES else "candidate",
+         "validation_mae": float(r["cv_mae"]), "may_mae": float(r["mae"])}
+        for r in comparison
+    ]
+    evaluation = {
+        "schema_version": 1, "source": "B-part_전력예측", "model": name, "row_count": len(rows),
+        "mae_hourly_pow": {"mae504": m504, "mae505": m505},
+        "mae_may_bill": {"mae504": m504 * bill_rate if m504 else None, "mae505": m505 * bill_rate if m505 else None},
+        "mae_may_carbon": {"mae504": m504 * carbon_rate if m504 else None, "mae505": m505 * carbon_rate if m505 else None},
+        "predicted_total_pow": sum(v for _, v in rows),
+        "baseline_comparison": comparison_rows,
+        "reference_note": {"mae_reference_upper": 89.0, "mae_reference_lower": 73.0,
+                           "use_as_threshold": False, "note": "참고용(합격 기준 아님)"},
+    }
+    (out / "evaluation_bpart.json").write_text(json.dumps(evaluation, ensure_ascii=False, indent=2), encoding="utf-8")
+    selection = {
+        "schema_version": 1, "source": "B-part_전력예측", "selected_model": name,
+        "selected_label": LABELS.get(name, name),
+        "selection_score_validation_mae": float(chosen["cv_mae"]),
+        "candidate_scores": {r["model"]: float(r["cv_mae"]) for r in comparison if r["model"] not in BASELINES},
+        "baseline_comparison": comparison_rows,
+        "split_time": "2025-03-31T00:00:00", "validation_scheme": "과거 720시간 3회(1/30–2/28, 3/1–3/30, 3/31–4/29)",
+        "refit_scope": "full training span (2024-12-01 – 2025-04-29 23:00)", "refit_row_count": 3600,
+    }
+    (out / "model_selection_bpart.json").write_text(json.dumps(selection, ensure_ascii=False, indent=2), encoding="utf-8")
     meta = {
         "model": name,
         "label": LABELS.get(name, name),
@@ -85,6 +126,8 @@ def main() -> None:
         "method": "재귀 예측(4/29 23시까지의 실측만 사용, 이후 자기 예측값을 lag로 사용)",
         "train_end": "2025-04-29 23:00",
         "points": len(rows),
+        "mae504_wh": m504, "mae505_wh": m505,
+        "interval": {"q05": iv["q05"], "q95": iv["q95"], "n": iv["n"]} if iv else None,
         "start": rows[0][0] if rows else None,
         "end": rows[-1][0] if rows else None,
         "source": "B-part_전력예측/audit_outputs",

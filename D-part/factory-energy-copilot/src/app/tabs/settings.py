@@ -1,7 +1,7 @@
 """설정 페이지 (v3 §6, v4 settings.png).
 
-설정값은 ``st.session_state["settings"]``(세션 한정)에만 저장한다. 파일 쓰기·artifacts
-수정 없음. MAE·평가 수치는 설정과 무관하게 evaluation.json(config 기본 계수) 값이다.
+설정값은 ``st.session_state["settings"]``와 ``.cache/settings.json``(git 제외)에 저장해
+새로고침 후에도 유지한다. artifacts 수정 없음. MAE·평가 수치는 설정과 무관하게 evaluation.json(config 기본 계수) 값이다.
 Slack 웹훅 URL은 환경변수 ``SLACK_WEBHOOK_URL``에서만 읽고 화면에는 연결됨/미설정만 표시한다.
 """
 
@@ -31,6 +31,7 @@ _KEYS = {
     "alert_interval": "w_alert_interval",
     "bill_surge_pct": "w_bill_surge_pct",
     "anomaly_surge_factor": "w_anomaly_surge_factor",
+    "anomaly_k": "w_anomaly_k",
     "night_start": "w_night_start",
     "night_end": "w_night_end",
 }
@@ -49,6 +50,7 @@ def _store(field: str) -> None:
     cur = page_logic.merged_settings(st.session_state.get(page_logic.SETTINGS_KEY))
     cur[field] = st.session_state.get(_KEYS[field])
     st.session_state[page_logic.SETTINGS_KEY] = cur
+    page_logic.save_settings(cur)  # 새로고침·서버 재시작 후에도 유지
 
 
 def _reset() -> None:
@@ -57,7 +59,9 @@ def _reset() -> None:
     defaults = page_logic.default_settings()
     st.session_state[page_logic.SETTINGS_KEY] = defaults
     for field, key in _KEYS.items():
-        st.session_state[key] = defaults[field]
+        if field in defaults:
+            st.session_state[key] = defaults[field]
+    page_logic.save_settings(defaults)
 
 
 def render(settings: dict[str, Any]) -> None:
@@ -91,17 +95,13 @@ def render(settings: dict[str, Any]) -> None:
             st.markdown(
                 components.panel_header("알림 임계값", icon_name="bell"), unsafe_allow_html=True
             )
-            _row(st, "예측구간 이탈 경고", lambda: st.toggle(
-                "예측구간 이탈 경고", value=bool(settings["alert_interval"]),
-                key=_KEYS["alert_interval"], on_change=_store, args=("alert_interval",),
-                label_visibility="collapsed"))
             _row(st, "요금 급증: 일 평균 대비 (%)", lambda: st.number_input(
                 "요금 급증", min_value=0.0, value=float(settings["bill_surge_pct"]), step=5.0,
                 key=_KEYS["bill_surge_pct"], on_change=_store, args=("bill_surge_pct",),
                 label_visibility="collapsed"))
-            _row(st, "이상 급증: 평소 건수의 (배)", lambda: st.number_input(
-                "이상 급증", min_value=1.0, value=float(settings["anomaly_surge_factor"]), step=0.5,
-                key=_KEYS["anomaly_surge_factor"], on_change=_store, args=("anomaly_surge_factor",),
+            _row(st, "이상 탐지 민감도 (σ, 클수록 엄격)", lambda: st.number_input(
+                "이상 탐지 민감도", min_value=2.5, max_value=5.0, value=float(settings["anomaly_k"]), step=0.5,
+                key=_KEYS["anomaly_k"], on_change=_store, args=("anomaly_k",),
                 label_visibility="collapsed"))
             _row(st, "야간 시간대 시작 (시)", lambda: st.number_input(
                 "야간 시작", min_value=0, max_value=23, value=int(settings["night_start"]), step=1,

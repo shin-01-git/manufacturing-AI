@@ -21,7 +21,7 @@ def _all(b):
 
 
 @needs_real
-@pytest.mark.parametrize("audience,lo,hi", [(bm.EXECUTIVE, 5, 5), (bm.ENERGY, 6, 7), (bm.FACILITY, 6, 8)])
+@pytest.mark.parametrize("audience,lo,hi", [(bm.EXECUTIVE, 5, 5), (bm.ENERGY, 6, 7), (bm.FACILITY, 5, 8)])
 def test_line_counts_per_audience(audience, lo, hi):
     b = bm.build_briefing(audience, "2025-05-10", "2025-05-31", artifacts_dir=REAL)
     assert lo <= len(b.lines) <= hi
@@ -52,7 +52,8 @@ def test_watch_modules_are_capped_and_nonzero():
     from src.agent import tools
 
     status = tools.get_module_status(artifacts_dir=REAL)
-    zero = {r["module"] for r in status["modules"] if not r["anomaly_count"]}
+    # 10/16: 점검 설비 = 급변 탐지가 있는 설비(5초 기준 미달 건수 아님)
+    zero = {r["module"] for r in status["modules"] if not r.get("pattern_count", r["anomaly_count"])}
     assert not zero & {m for m, _ in ex.watch_modules + fa.watch_modules}
     assert "13개" not in _all(ex)
 

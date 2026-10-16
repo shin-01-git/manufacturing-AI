@@ -1028,3 +1028,27 @@ def anomaly_timeline(points: list[dict[str, Any]], type_labels: dict[str, str], 
         margin=dict(l=110, r=16, t=24, b=34),
     )
     return fig
+
+
+
+def load_series_chart(series: dict[str, Any], *, height: int = 260):
+    """부하 패턴 시계열(최근 1시간/24시간/일별) 선 그래프 + 평균선. y축은 값 범위로 확대."""
+
+    import plotly.graph_objects as go
+
+    from src.app import page_logic
+
+    _ensure_template()
+    fig = go.Figure(go.Scatter(
+        x=series["x"], y=series["y"], mode="lines+markers" if len(series["y"]) <= 40 else "lines",
+        line=dict(color=theme.COLOR["accent"], width=2), marker=dict(size=4),
+        hovertemplate="%{x}<br>%{y:,.3f} " + series["unit"] + "<extra></extra>", name=series["title"],
+    ))
+    fig.add_hline(y=series["mean"], line=dict(color=theme.COLOR["muted"], width=1, dash="dot"),
+                  annotation_text=f"평균 {series['mean']:,.3f}", annotation_position="top left",
+                  annotation_font=dict(size=11, color=theme.COLOR["muted"]))
+    rng = page_logic.zoom_range(series["y"])
+    fig.update_layout(template=_TPL, height=height, showlegend=False,
+                      yaxis=dict(title=f"{series['title']}({series['unit']})", range=list(rng) if rng else None),
+                      xaxis=dict(title="", type="category", nticks=8))
+    return fig

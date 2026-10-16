@@ -53,19 +53,20 @@ def test_carbon_price_default_is_blank_and_rates_flag():
     assert page_logic.rates_differ_from_default(s)
 
 
-def test_alerts_flag_interval_exit_and_report_errors():
+def test_alerts_no_validation_interval_and_include_pattern():
+    """발표용: 5월 실제값 비교(예측구간 이탈)는 경고에서 제외, 이상 6종은 포함."""
     s = page_logic.default_settings()
     avp = {"rows": [
         {"id": "2025-05-10 00:00:00", "actual_pow": 120.0, "pred_pow": 100.0, "pred_low": 95.0, "pred_high": 105.0},
-        {"id": "2025-05-10 01:00:00", "actual_pow": 100.0, "pred_pow": 100.0, "pred_low": 95.0, "pred_high": 105.0},
     ]}
     forecast = {"rows": _rows(hours=2)}
-    out = page_logic.build_alerts(avp, forecast, {"points": []}, s)
-    assert out["interval_count"] == 1 and out["errors"] == []
-    bad = page_logic.build_alerts({"error": {}}, forecast, {"points": []}, s)
-    assert "actual_vs_pred.csv" in bad["errors"]
-    s["alert_interval"] = False
-    assert page_logic.build_alerts(avp, forecast, {"points": []}, s)["interval_count"] == 0
+    pattern = {"events": [{"module": "A", "hour": "2025-04-01 03:00:00", "type": "night_operation",
+                           "metric": "active_power", "value": 3100.0, "baseline": 3000.0, "z": 3.8, "unit": "W"}]}
+    out = page_logic.build_alerts(avp, forecast, {"points": []}, s, pattern=pattern)
+    assert out["interval_count"] == 0 and out["errors"] == []
+    assert out["pattern_count"] == 1 and out["items"][0]["title"].startswith("야간 이상가동")
+    bad = page_logic.build_alerts(avp, {"error": {}}, {"points": []}, s)
+    assert "predictions.csv" in bad["errors"]
 
 
 def test_type_options_only_contain_types_in_data():

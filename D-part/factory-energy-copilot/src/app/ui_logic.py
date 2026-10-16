@@ -90,8 +90,8 @@ def period_chip_text(period: dict[str, str | None]) -> str:
     start = period.get("start")
     end = period.get("end")
     if not start or not end:
-        return f"분석 기간 {tools_mod.NO_DATA} · 검증 모드"
-    return f"분석 기간 {start} ~ {end} · 검증 모드"
+        return f"분석 기간 {tools_mod.NO_DATA}"
+    return f"분석 기간 {start} ~ {end}"
 
 
 def fmt_localtime_short(value: Any) -> str:

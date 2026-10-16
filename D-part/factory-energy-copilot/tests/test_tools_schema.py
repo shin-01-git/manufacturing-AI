@@ -40,7 +40,7 @@ def test_module_status_schema(fake_artifacts):
     assert "error" not in result
     assert result["count"] == 3
     row = result["modules"][0]
-    assert set(("module", "anomaly_count", "anomaly_ratio", "last_seen", "status")) == set(row)
+    assert set(("module", "anomaly_count", "anomaly_ratio", "last_seen", "status")) <= set(row)
     assert isinstance(row["anomaly_count"], int)
     assert isinstance(row["anomaly_ratio"], float)
 
