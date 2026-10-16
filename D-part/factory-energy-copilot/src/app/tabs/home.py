@@ -730,7 +730,8 @@ def _render_report_panel(st, bundle, totals, settings, ctx=None, rows=None) -> N
         is_energy = (ctx or {}).get("role") == page_logic.ROLE_ENERGY
         if is_energy and rows:
             # 에너지 관리 담당자: 예측 기간 전체 AI 보고서(HTML). 누를 때만 생성(LLM 호출 포함).
-            b_col, l_col = st.columns([1.3, 1], vertical_alignment="center")
+            dl_box = st.container(key="report_dl")
+            b_col, l_col = dl_box.columns([1.3, 1], vertical_alignment="center")
             b_col.download_button(
                 "AI 보고서 다운로드", data=_report_callable(bundle, ctx, rows, settings),
                 file_name=f"energy_report_{(ctx or {}).get('start')}_{(ctx or {}).get('end')}.html",

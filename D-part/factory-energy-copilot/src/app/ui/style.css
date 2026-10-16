@@ -542,3 +542,15 @@ button[kind="tertiary"] { color: var(--fec-accent); }
 .fec-bchip { display: inline-block; margin: 2px 6px 2px 0; padding: 1px 10px; border-radius: 999px; background: var(--fec-chip-bg); font-size: 13px; }
 .fec-brief-limits { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--fec-border); font-size: 12px; color: var(--fec-muted); }
 .fec-brief-src { margin-top: 6px; font-size: 12px; color: var(--fec-muted); }
+
+/* 에너지 관리 담당자: AI 보고서 다운로드 — 리포트 카드와 간격, 연한 파란색 */
+.st-key-report_dl { margin-top: 14px; }
+.st-key-report_dl [data-testid="stDownloadButton"] button {
+  background: var(--fec-c-info-tint); color: var(--fec-c-info-text);
+  border: 1px solid var(--fec-c-info); border-radius: 10px; font-weight: 600;
+}
+.st-key-report_dl [data-testid="stDownloadButton"] button:hover {
+  background: var(--fec-c-info-tint); color: var(--fec-c-info-text);
+  border-color: var(--fec-c-info-text); filter: brightness(0.97);
+}
+.st-key-report_dl [data-testid="stDownloadButton"] button p { color: var(--fec-c-info-text); font-weight: 600; }
