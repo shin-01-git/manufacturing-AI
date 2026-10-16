@@ -42,6 +42,19 @@ artifacts/*
 !artifacts/features.parquet
 !artifacts/model.joblib
 !artifacts/preprocessor_state.json
+# 10/15–17 대시보드 배포용(B파트 예측·이상치·설비 집계, 모두 수 MB 이하 집계본. 원본 data/는 계속 제외)
+!artifacts/forecast_bpart.csv
+!artifacts/forecast_bpart_meta.json
+!artifacts/forecast_bpart_interval.json
+!artifacts/evaluation_bpart.json
+!artifacts/model_selection_bpart.json
+!artifacts/pattern_anomalies.parquet
+!artifacts/pattern_anomalies_meta.json
+!artifacts/c_part_2_88sigma_conditions.csv
+!artifacts/c_part_2_88sigma_report.txt
+!artifacts/module_hourly_features.parquet
+!artifacts/module_hourly_features_meta.json
+!artifacts/module_minute_recent.parquet
 
 # ===== 기획 문서(최종본만 추적) =====
 # 최종 기획서 "2팀 서비스 기획서 10.10.pdf"만 올리고 나머지는 제외
@@ -57,3 +70,7 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+
+# 상위 D-part/.gitignore의 `_*.py` 규칙이 패키지 파일까지 막아 예외 처리(새로 받은 사람도 실행·테스트 가능하게)
+!__init__.py
+!src/anomaly/_common.py

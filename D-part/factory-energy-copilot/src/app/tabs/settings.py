@@ -111,7 +111,8 @@ def render(settings: dict[str, Any]) -> None:
                 "야간 종료", min_value=0, max_value=23, value=int(settings["night_end"]), step=1,
                 key=_KEYS["night_end"], on_change=_store, args=("night_end",),
                 label_visibility="collapsed"))
-            st.caption("민감도(σ)·야간 시간대는 시간 급변 탐지에 바로 반영됩니다. 값은 저장돼 다시 열어도 유지됩니다.")
+            st.caption("민감도(σ)·야간 시간대는 시간 급변 탐지에 바로 반영됩니다. "
+                       + ("값은 이 접속(세션) 동안 유지됩니다." if config.IS_CLOUD else "값은 저장돼 다시 열어도 유지됩니다."))
 
     with components.panel(height=H_SLACK, key=PANEL_SLACK):
         c1, c2, c3 = st.columns([6, 2, 2], vertical_alignment="center")
@@ -130,7 +131,7 @@ def render(settings: dict[str, Any]) -> None:
             st.button("테스트 전송", key="st_slack_test", disabled=True)
         st.caption("웹훅 URL은 환경변수 SLACK_WEBHOOK_URL에서만 읽으며 화면에 표시하지 않습니다.")
 
-    with components.panel(height=H_RULES, key=PANEL_RULES):
+    with components.panel(key=PANEL_RULES):  # 규칙 줄 수가 늘어 자동 높이
         st.markdown(
             components.panel_header("현재 적용 규칙 (읽기 전용)", icon_name="lock"),
             unsafe_allow_html=True,

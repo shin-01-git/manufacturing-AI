@@ -1,0 +1,22 @@
+{
+  "model": "lightgbm_reference",
+  "label": "LightGBM",
+  "cv_mae_wh": 78.2385660016,
+  "may_mae_wh": 84.3415672923,
+  "selected_by": "5월 MAE 최소(기준 모델 제외)",
+  "cv_best_model": "train_mean",
+  "cv_best_label": "학습 평균",
+  "method": "재귀 예측(4/29 23시까지의 실측만 사용, 이후 자기 예측값을 lag로 사용)",
+  "train_end": "2025-04-29 23:00",
+  "points": 505,
+  "mae504_wh": 84.33101306904747,
+  "mae505_wh": 84.34156729247508,
+  "interval": {
+    "q05": -161.58770927957883,
+    "q95": 160.44947807281457,
+    "n": 2160
+  },
+  "start": "2025-05-10 00:00:00",
+  "end": "2025-05-31 00:00:00",
+  "source": "B-part_전력예측/audit_outputs"
+}

@@ -193,7 +193,26 @@ def get_openai_api_key() -> str | None:
     Returns:
         키 문자열 또는 없으면 None.
     """
-    return os.environ.get("OPENAI_API_KEY")
+    key = os.environ.get("OPENAI_API_KEY")
+    if key:
+        return key
+    return _secret("OPENAI_API_KEY")
+
+
+def _secret(name: str) -> str | None:
+    """Streamlit Cloud의 Secrets(st.secrets)에서 값만 읽는다. 없거나 Streamlit 밖이면 None."""
+    try:
+        import streamlit as st
+
+        value = st.secrets.get(name)  # secrets.toml이 없으면 예외 → None
+        return str(value) if value else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+# Streamlit Community Cloud는 저장소를 /mount/src 아래에 받는다. 그곳에서는 접속자 모두가 같은
+# 파일을 쓰므로 설정 파일 저장을 끄고(접속자별 세션 값만 사용) 화면 문구도 바꾼다.
+IS_CLOUD: bool = PROJECT_ROOT.as_posix().startswith("/mount/src") or os.environ.get("FEC_CLOUD") == "1"
 
 
 def get_openai_model() -> str:

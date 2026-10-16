@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "source": "B-part_전력예측",
+  "model": "lightgbm_reference",
+  "row_count": 505,
+  "mae_hourly_pow": {
+    "mae504": 84.33101306904747,
+    "mae505": 84.34156729247508
+  },
+  "mae_may_bill": {
+    "mae504": 15179.582352428544,
+    "mae505": 15181.482112645514
+  },
+  "mae_may_carbon": {
+    "mae504": 35.75634954127613,
+    "mae505": 35.76082453200943
+  },
+  "predicted_total_pow": 19754897.058388192,
+  "baseline_comparison": [
+    {
+      "model": "lightgbm_reference",
+      "label": "LightGBM",
+      "kind": "candidate",
+      "validation_mae": 78.2385660016,
+      "may_mae": 84.3415672923
+    },
+    {
+      "model": "extra_trees_lags",
+      "label": "ExtraTrees",
+      "kind": "candidate",
+      "validation_mae": 77.7168828802,
+      "may_mae": 88.6379869855
+    },
+    {
+      "model": "train_median",
+      "label": "학습 중앙값",
+      "kind": "baseline",
+      "validation_mae": 77.2322898405,
+      "may_mae": 88.8080487835
+    },
+    {
+      "model": "ridge_lags",
+      "label": "Ridge",
+      "kind": "candidate",
+      "validation_mae": 77.3927346271,
+      "may_mae": 88.8443831523
+    },
+    {
+      "model": "train_mean",
+      "label": "학습 평균",
+      "kind": "baseline",
+      "validation_mae": 77.2302519134,
+      "may_mae": 89.0314876277
+    },
+    {
+      "model": "xgboost_lags",
+      "label": "XGBoost",
+      "kind": "candidate",
+      "validation_mae": 77.4941292786,
+      "may_mae": 91.6341157338
+    },
+    {
+      "model": "hist_lags",
+      "label": "HistGradientBoosting",
+      "kind": "candidate",
+      "validation_mae": 77.9676624731,
+      "may_mae": 92.5227566366
+    },
+    {
+      "model": "lightgbm_lags",
+      "label": "LightGBM 보수 설정",
+      "kind": "candidate",
+      "validation_mae": 78.1465080069,
+      "may_mae": 93.2089534951
+    }
+  ],
+  "reference_note": {
+    "mae_reference_upper": 89.0,
+    "mae_reference_lower": 73.0,
+    "use_as_threshold": false,
+    "note": "참고용(합격 기준 아님)"
+  }
+}

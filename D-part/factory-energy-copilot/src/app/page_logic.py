@@ -1236,6 +1236,8 @@ def load_saved_settings(path=None) -> dict[str, Any] | None:
 
     import json
 
+    if path is None and config.IS_CLOUD:
+        return None  # 배포 환경: 접속자끼리 설정이 섞이지 않게 파일을 읽지 않는다
     p = path or SETTINGS_FILE
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
@@ -1258,6 +1260,8 @@ def load_saved_settings(path=None) -> dict[str, Any] | None:
 def save_settings(settings: dict[str, Any], path=None) -> bool:
     import json
 
+    if path is None and config.IS_CLOUD:
+        return False  # 배포 환경: 세션에만 보관
     p = path or SETTINGS_FILE
     try:
         p.parent.mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,13 @@
+{
+  "k": 3.5,
+  "hours_evaluated": 46800,
+  "count": 27,
+  "counts": {
+    "load_imbalance": 16,
+    "abnormal_pattern": 3,
+    "power_factor_drop": 3,
+    "reactive_power_surge": 2,
+    "night_operation": 3
+  },
+  "rule": "전체 평균 ±kσ 밖 + 직전 시간 대비 ±kσ 급변 (두 조건 모두)"
+}
