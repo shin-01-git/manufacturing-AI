@@ -286,8 +286,10 @@ def build_briefing(
         k = pattern["count"] + (cp["count"] if "error" not in cp else 0)
         k_s = calc.add("이상치(시간 급변 + 5초 고전력)", f"{k}건", PAT)
         k_detail = " · ".join(
-            f"{t} {calc.add(f'이상 6종 {t}', str(n), PAT)}" for t, n in by_type.most_common()
+            f"{t} {calc.add(f'시간 급변 {t}', str(n), PAT)}" for t, n in by_type.most_common()
         )
+        if "error" not in cp and cp["count"]:
+            k_detail += f" · 고전력 {calc.add('5초 고전력', str(cp['count']), tools_mod.CPART_NAME)}"
     else:
         k, k_s, k_detail = None, NO_DATA, ""
 
@@ -314,12 +316,12 @@ def build_briefing(
         return BriefLine(label, "설비별 이상 비율입니다 (관찰 기록, 설비 판정 아님).",
                          tone="watch", sources=[STAT], chips=watch_chips)
 
-    def interval_line(label: str = "이상 6종") -> BriefLine:
+    def interval_line(label: str = "이상치") -> BriefLine:
         if k is None:
             return BriefLine(label, NO_DATA, sources=[PAT])
         if k == 0:
             return BriefLine(label, "평소 패턴을 벗어난 시간은 없습니다.", sources=[PAT])
-        return BriefLine(label, f"평소 패턴을 벗어난 시간 {k_s} ({k_detail}) — 해당 시각 운전 기록 확인 대상입니다.",
+        return BriefLine(label, f"이상치 {k_s} ({k_detail}) — 해당 시각 운전 기록 확인 대상입니다.",
                          tone="watch", sources=[PAT])
 
     if audience == EXECUTIVE:
@@ -367,7 +369,7 @@ def build_briefing(
             pd_ = _day(peak["id"])
             peak_s = calc.add(
                 "요금 최고 예측 시간대",
-                f"{WEEKDAYS[pd_.weekday()]}요일 {int(peak['id'][11:13])}시" if pd_ else NO_DATA, PRED)
+                f"{pd_:%m-%d}({WEEKDAYS[pd_.weekday()]}) {int(peak['id'][11:13])}시" if pd_ else NO_DATA, PRED)
             lines.append(BriefLine("요금 최고 시간대", f"예측 요금이 가장 높은 시간대는 {peak_s}입니다.", sources=[PRED]))
             by_day: dict[str, list[float]] = {}
             for r in rows:
@@ -376,19 +378,20 @@ def build_briefing(
             if len(full) >= 2:
                 hi = max(full, key=full.get)
                 lo = min(full, key=full.get)
-                hi_s = calc.add("최고 예측일", f"{hi[5:]} {fmt.fmt_krw_short(full[hi])}", PRED)
-                lo_s = calc.add("최저 예측일", f"{lo[5:]} {fmt.fmt_krw_short(full[lo])}", PRED)
+                hi_s = calc.add("최고 예측일", f"{hi[5:]} {full[hi]:,.0f}원", PRED)
+                lo_s = calc.add("최저 예측일", f"{lo[5:]} {full[lo]:,.0f}원", PRED)
                 lines.append(BriefLine("일별 최고·최저", f"예측 요금이 가장 높은 날은 {hi_s}, 가장 낮은 날은 {lo_s}입니다.", sources=[PRED]))
             else:
                 lines.append(BriefLine("일별 최고·최저", NO_DATA, sources=[PRED]))
         else:
             lines.append(BriefLine("요금 최고 시간대", NO_DATA, sources=[PRED]))
             lines.append(BriefLine("일별 최고·최저", NO_DATA, sources=[PRED]))
-        lines.append(interval_line("이상 6종"))
+        lines.append(interval_line("이상치"))
         # selected model vs best baseline (selection json + evaluation baseline table)
         base = [r for r in evaluation.get("baseline_comparison", []) if r.get("kind") == "baseline"] if "error" not in evaluation else []
         sel_name = (selection or {}).get("selected_model")
         sel_mae = (selection or {}).get("selection_score_validation_mae")
+        sel_lab = (selection or {}).get("selected_label") or sel_name
         if base and sel_name and sel_mae is not None:
             best = min(base, key=lambda r: r["validation_mae"])
             diff = abs(float(sel_mae) - float(best["validation_mae"]))
@@ -396,15 +399,15 @@ def build_briefing(
             best_s = calc.add("최고 베이스라인 검증 MAE", fmt.fmt_mae(best["validation_mae"]), EVAL)
             diff_s = calc.add("MAE 차이", fmt.fmt_mae(diff), f"{SELECTION_NAME}·{EVAL}")
             if float(sel_mae) < float(best["validation_mae"]):
-                txt = f"선택 모델({sel_name}) {sel_s}, 최고 베이스라인({best['model']}) {best_s} 대비 {diff_s} 낮음."
+                txt = f"선택 모델({sel_lab}) 과거 검증 MAE {sel_s} Wh, 최고 기준 모델({best.get('label', best['model'])}) {best_s} Wh 대비 {diff_s} Wh 낮음."
             else:
-                txt = (f"선택 모델({sel_name}) {sel_s}, 최고 베이스라인({best['model']}) {best_s}와 "
-                       f"비슷한 수준(차이 {diff_s}).")
+                txt = (f"선택 모델({sel_lab}) 과거 검증 MAE {sel_s} Wh, 최고 기준 모델({best.get('label', best['model'])}) {best_s} Wh와 "
+                       f"비슷한 수준(차이 {diff_s} Wh). 5월 MAE로는 선택 모델이 가장 낮습니다.")
             lines.append(BriefLine("모델 비교", txt, sources=[SELECTION_NAME, EVAL]))
         else:
             lines.append(BriefLine("모델 비교", NO_DATA, sources=[SELECTION_NAME]))
-        lines.append(BriefLine("예측 정확도", f"시간당 오차(MAE) {mae_s}, 평균 전력의 {err_s}입니다." if err_s != NO_DATA else NO_DATA, sources=[EVAL, PRED]))
-    else:  # FACILITY — 10/16 피드백: 급변(이상 6종) 기준, 5초 기준 미달 원본은 쓰지 않음
+        lines.append(BriefLine("예측 정확도", f"시간당 오차(MAE) {mae_s} Wh, 평균 전력의 {err_s}입니다." if err_s != NO_DATA else NO_DATA, sources=[EVAL, PRED]))
+    else:  # FACILITY — 10/16 피드백: 이상치(시간 급변 + 5초 고전력) 기준, 5초 기준 미달 원본은 쓰지 않음
         rows_s = status.get("modules", []) if "error" not in status else []
         n_alert = sum(1 for r in rows_s if r.get("status") == "이상")
         n_watch_f = sum(1 for r in rows_s if r.get("status") == "주의")

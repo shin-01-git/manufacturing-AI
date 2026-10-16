@@ -1,9 +1,9 @@
-"""설비×시간 특징(module_hourly_features.parquet)에서 이상 6종을 탐지해 artifact로 저장한다.
+"""설비×시간 특징(module_hourly_features.parquet)에서 시간 급변 5종을 탐지해 artifact로 저장한다.
 
 판정(10/16 멘토 피드백 반영 — 거짓 양성 축소): 두 조건을 모두 만족하는 시간만 이상.
   ① 범위 이탈: 그 설비 전체 기간 평균에서 ±kσ 밖
   ② 급격한 변화: 직전 시간 대비 변화량이 ±kσ 밖
-야간 이상가동은 22–06시에 (k−0.5)σ, 전류만 증가는 전류 급증 + 유효전력 z < 1.
+야간 이상가동은 22–06시에 (k−0.5)σ. (전류만 증가는 10/17 팀 기준표에서 제외)
 대시보드는 같은 함수(page_logic.detect_sudden)로 설정의 민감도 k에 맞춰 다시 계산한다.
 
   python scripts/detect_pattern_anomalies.py [--k 3.5]

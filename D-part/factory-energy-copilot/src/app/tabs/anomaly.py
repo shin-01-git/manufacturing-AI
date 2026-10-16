@@ -124,6 +124,9 @@ def render(
                 width="stretch", config=charts.PLOTLY_CONFIG,
             )
 
+    rule_counts = page_logic.rule_condition_counts(events, start=d0, end=d1, modules=selected_modules)
+    _render_type_table(st, anomalies, rule_counts, [r["module"] for r in rows], cpart_k)
+
     _render_pattern_panel(st, pattern or {"error": "not_found"})
     _render_cpart_panel(st, cpart or {"error": "not_found"}, date_range)
 
@@ -196,26 +199,67 @@ def _render_unified_status_table(st, rows) -> None:
                    "설비당 평균 약 4건이라 설비 간 차이는 크지 않습니다.")
 
 
-PATTERN_TYPES = ["abnormal_pattern", "night_operation", "load_imbalance",
-                 "reactive_power_surge", "power_factor_drop", "current_only_increase"]
+PATTERN_TYPES = ["load_imbalance", "reactive_power_surge", "power_factor_drop",
+                 "abnormal_pattern", "night_operation"]
 PATTERN_RULES = {
     "abnormal_pattern": "유효전력이 위·아래로 범위 이탈 + 급변",
     "night_operation": "야간에 유효전력 상승 이탈 + 급변 (0.5σ 완화)",
     "load_imbalance": "3상 전류 불평형률 상승 이탈 + 급변",
     "reactive_power_surge": "무효전력 상승 이탈 + 급변",
     "power_factor_drop": "평균 역률 하락 이탈 + 급변",
-    "current_only_increase": "평균 전류 상승 이탈 + 급변, 유효전력 z < 1",
 }
 
 
+def _render_type_table(st, anomalies, rule_counts, modules: list[str], cpart_k: float) -> None:
+    """이상 유형 8종 × 설비 표. 이상치 = 사건형 6종 합계, 저전압·저역률은 발생 시간 수."""
+
+    from collections import Counter
+
+    with components.panel(key="an_type8"):
+        st.markdown(
+            components.panel_header("유형별 이상 현황", icon_name="grid", tone="anomaly",
+                                    desc="8종 · 설비별 건수 (저전압·저역률은 발생 시간 수)"),
+            unsafe_allow_html=True,
+        )
+        cnt = Counter((a["module"], a["type"].split("(")[0]) for a in anomalies)
+        event_types = [lab for lab, src, _ in page_logic.TYPE8 if src != "rule"]
+        n_hours = 3600  # 학습 기간 12/01–04/29 시간 수
+        table = []
+        for m in modules:
+            row: dict[str, Any] = {"설비": m}
+            total = 0
+            for lab, src, _ in page_logic.TYPE8:
+                if src == "rule":
+                    h = (rule_counts.get(m, {}).get(lab) or {}).get("hours", 0)
+                    row[f"{lab} (시간)"] = f"{h:,}h · {h / n_hours * 100:.0f}%" if h else "—"
+                else:
+                    row[lab] = cnt[(m, lab)]
+                    total += cnt[(m, lab)]
+            row["이상치 합계"] = total
+            table.append(row)
+        table.sort(key=lambda r: (-r["이상치 합계"], r["설비"]))
+        st.dataframe(table, width="stretch", hide_index=True, height=35 * (len(table) + 1) + 3)
+        st.caption(
+            "이상치 합계 = 저전압·저역률을 뺀 6종. 저전압·저역률은 전체 3,600시간 중 거의 매시간 나타나는 "
+            "상시 조건이라 발생 시간 수(비율)로 표시하고 이상치·설비 상태·경고에는 넣지 않습니다(설비 특성·계측 기준 확인 대상)."
+        )
+        with st.expander("판정 기준 (8종)"):
+            st.markdown(components.html_table(
+                ["유형", "판정"],
+                [[lab, txt.replace("2.9", f"{cpart_k:g}") if lab == "고전력" else txt]
+                 for lab, _, txt in page_logic.TYPE8]
+                + [["k", f"설정의 이상 탐지 민감도 (기본 {config.DEFAULT_ANOMALY_K:g}σ)"]],
+            ), unsafe_allow_html=True)
+
+
 def _render_pattern_panel(st, pattern: dict[str, Any]) -> None:
-    """이상 6종(멘토링 피드백) 탐지 결과: 설비×유형 건수표 + 탐지 목록."""
+    """시간 급변 5종 탐지 목록(유형별 건수는 '유형별 이상 현황' 표)."""
 
     with components.panel(key="an_pattern"):
         head_l, head_r = st.columns([3, 2], vertical_alignment="center")
         head_l.markdown(
             components.panel_header("시간 급변 탐지", icon_name="anomaly", tone="anomaly",
-                                    desc="1시간 집계 · 설비 평균 범위 이탈 + 직전 시간 대비 급변 (6종)"),
+                                    desc="1시간 집계 · 설비 평균 범위 이탈 + 직전 시간 대비 급변 (5종)"),
             unsafe_allow_html=True,
         )
         if "error" in pattern:
@@ -225,18 +269,7 @@ def _render_pattern_panel(st, pattern: dict[str, Any]) -> None:
         labels = {t: page_logic.type_label(t) for t in PATTERN_TYPES}
         pick = head_r.selectbox("유형", ["전체 유형"] + [labels[t] for t in PATTERN_TYPES],
                                 key="pattern_type", label_visibility="collapsed")
-        left, right = st.columns([1.1, 1.6])
-        with left:
-            mods = sorted({e["module"] for e in events}, key=lambda m: -sum(e["module"] == m for e in events))
-            table = []
-            for m in mods:
-                row = {"설비": m}
-                for t in PATTERN_TYPES:
-                    row[labels[t]] = sum(1 for e in events if e["module"] == m and e["type"] == t)
-                row["합계"] = sum(row[labels[t]] for t in PATTERN_TYPES)
-                table.append(row)
-            st.dataframe(table, width="stretch", hide_index=True, height=300)
-            st.caption("판정 기준: " + " · ".join(f"{labels[t]} = {PATTERN_RULES[t]}" for t in PATTERN_TYPES))
+        right = st.container()
         with right:
             raw = next((t for t in PATTERN_TYPES if labels[t] == pick), None)
             sel = [e for e in events if raw is None or e["type"] == raw]
@@ -383,7 +416,7 @@ def _render_reasons(st, model: dict[str, Any]) -> None:
                 )
         st.caption(
             "이상 비율 = 규칙에 걸린 5초 측정 행 ÷ 해당 설비 전체 측정 행. 거의 매시간 생기는 순간 저하라 "
-            "거짓 양성이 많아 경고·설비 상태에는 쓰지 않습니다(참고). 경고는 '이상 6종 탐지'의 급변만 냅니다. "
+            "거짓 양성이 많아 경고·설비 상태에는 쓰지 않습니다(참고). 이상치·경고는 시간 급변과 5초 고전력만 셉니다. "
             "비지도 탐지(IsolationForest)는 전체의 21.8%를 이상으로 잡는 과탐지라 상태 판단에서 제외."
         )
 

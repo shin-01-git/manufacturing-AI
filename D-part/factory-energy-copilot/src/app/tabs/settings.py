@@ -141,7 +141,8 @@ def render(settings: dict[str, Any]) -> None:
                 [
                     ["이상치", "5초 고전력 + 시간 급변 (합산)"],
                     ["5초 고전력", f"유효전력 robust z ≥ {config.CPART_Z_DEFAULT:g} (팀 합의, 2.92 선택 가능)"],
-                    ["시간 급변", "설비 전체 평균 ±σ 밖 + 직전 시간 대비 ±σ 급변 (σ는 위 민감도)"],
+                    ["시간 급변 (5종)", "부하 불균형·무효전력 급증·역률 급감·비정상 패턴·야간 이상가동 — 설비 전체 평균 ±σ 밖 + 직전 시간 대비 ±σ 급변 (σ는 위 민감도)"],
+                    ["저전압·저역률 (참고)", "5초 3상 모두 210V / 85% 미만 — 상시 조건이라 발생 시간 수로만 표시, 이상치 제외"],
                     ["설비 상태", f"이상치 {config.STATUS_ALERT_PATTERN_COUNT}건 이상 = 이상, {config.STATUS_WATCH_PATTERN_COUNT}–{config.STATUS_ALERT_PATTERN_COUNT - 1}건 = 주의"],
                     ["예측구간", "과거 검증 잔차 P5–P95 (약 −162 ~ +160 Wh)"],
                     ["예측 모델", "LightGBM · 5월 MAE 84.3 Wh"],

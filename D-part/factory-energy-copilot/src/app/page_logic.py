@@ -1400,18 +1400,64 @@ SUDDEN_RULES = [
     ("load_imbalance", "current_unbalance", "%", +1, False),
     ("reactive_power_surge", "reactive_power", "var", +1, False),
     ("power_factor_drop", "pf_mean", "%", -1, False),
-    ("current_only_increase", "current_mean", "A", +1, False),
 ]
+# 이상 유형 8종(팀 이상 탐지 기준표): 시간 급변 5종 + 3상 규칙 2종(저전압·저역률) + 5초 고전력.
+# 이상치(건수)는 사건형 6종(시간 급변 5종 + 고전력)만 센다. 저전압·저역률은 거의 매시간 생기는
+# 상시 조건이라 발생 시간 수로 따로 보여준다(10/16 멘토 피드백: 거짓 양성 축소).
+TYPE8 = [
+    ("부하 불균형", "sudden", "3상 전류 불평형률이 설비 평균 +kσ 밖 + 직전 시간 대비 급변"),
+    ("무효전력 급증", "sudden", "무효전력이 설비 평균 +kσ 밖 + 급변"),
+    ("역률 급감", "sudden", "평균 역률이 설비 평균 −kσ 밖 + 급변"),
+    ("비정상 패턴", "sudden", "유효전력이 설비 평균 ±kσ 밖 + 급변"),
+    ("야간 이상가동", "sudden", "야간(22–06시) 유효전력이 +(k−0.5)σ 밖 + 급변"),
+    ("저전압", "rule", "5초 측정에서 3상 전압이 모두 210V 미만"),
+    ("저역률", "rule", "5초 측정에서 3상 역률이 모두 85% 미만"),
+    ("고전력", "cpart", "5초 유효전력 robust z ≥ 2.9 (≈5,186W 이상)"),
+]
+RULE_TYPE_LABEL = {"voltage_low_3phase": "저전압", "power_factor_low_3phase": "저역률"}
+_RULE_CACHE: dict[tuple, dict[str, dict[str, dict[str, int]]]] = {}
+
+
+def rule_condition_counts(events: dict[str, Any] | None, *, start: Any = None, end: Any = None,
+                          modules: list[str] | None = None) -> dict[str, dict[str, dict[str, int]]]:
+    """3상 규칙(저전압·저역률) 설비별 집계: {설비: {유형: {"rows": 5초 행 수, "hours": 발생 시간 수}}}."""
+
+    import pandas as pd
+
+    evs = (events or {}).get("events") if events and "error" not in events else None
+    if not evs:
+        return {}
+    key = (id(evs), len(evs), str(start), str(end), tuple(modules or ()))
+    if key in _RULE_CACHE:
+        return _RULE_CACHE[key]
+    df = pd.DataFrame(evs, columns=None)
+    if not {"module", "type", "localtime"}.issubset(df.columns):
+        return {}
+    t = pd.to_datetime(df["localtime"].astype(str).str[:19], errors="coerce")
+    df = df.assign(t=t, d=t.dt.date, h=t.dt.floor("h"))
+    s, e = to_date(start), to_date(end)
+    if s is not None:
+        df = df[df["d"] >= s]
+    if e is not None:
+        df = df[df["d"] <= e]
+    if modules:
+        df = df[df["module"].isin(modules)]
+    out: dict[str, dict[str, dict[str, int]]] = {}
+    for (m, typ), g in df.groupby(["module", "type"]):
+        lab = RULE_TYPE_LABEL.get(typ)
+        if lab:
+            out.setdefault(m, {})[lab] = {"rows": int(len(g)), "hours": int(g["h"].nunique())}
+    _RULE_CACHE[key] = out
+    return out
 _SUDDEN_CACHE: dict[tuple, dict[str, Any]] = {}
 
 
 def detect_sudden(features: Any, *, k: float = 3.5, night_hours: set[int] | None = None) -> dict[str, Any]:
-    """설비×시간 특징에서 이상 6종을 탐지한다.
+    """설비×시간 특징에서 시간 급변 5종을 탐지한다.
 
     판정 = 두 조건을 모두 만족하는 시간만:
       ① 범위 이탈: 그 설비 전체 기간 평균에서 ±k·표준편차 밖
       ② 급격한 변화: 직전 시간 대비 변화량이 그 설비 변화량 분포의 ±k·표준편차 밖
-    전류만 증가 = 평균 전류가 위 두 조건(상승)이고 같은 시간 유효전력 z < 1.
     반환: {"count", "events": [...], "k"} (events: module, hour, type, metric, value, baseline, z, jump_z, unit, rule)
     """
 
@@ -1450,8 +1496,6 @@ def detect_sudden(features: Any, *, k: float = 3.5, night_hours: set[int] | None
             # 야간은 가동이 늘면 바로 비용이라 0.5σ 낮춰 본다. 비정상 패턴으로 이미 잡힌 시간은 제외
             abn = (z["active_power"].abs() >= k) & (zd["active_power"].abs() >= k)
             m = hours.isin(night) & (a >= k - 0.5) & (b >= k - 0.5) & ~abn
-        if typ == "current_only_increase":
-            m &= z["active_power"] < 1
         rule = (f"전체 평균 {'+' if sign > 0 else '−' if sign < 0 else '±'}{k:g}σ 밖 + 직전 시간 대비 급변"
                 + (" (야간)" if night_only else ""))
         for idx in f.index[m.fillna(False)]:

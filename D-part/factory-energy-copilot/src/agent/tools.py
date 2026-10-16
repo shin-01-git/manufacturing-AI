@@ -501,7 +501,7 @@ def openai_tool_schemas() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "get_pattern_anomalies",
-                "description": "이상 6종(비정상 패턴·야간 이상가동·부하 불균형·무효전력 급증·역률 급감·전류만 증가) 탐지 목록. 전체 평균 ±3.5σ 밖 + 직전 시간 대비 급변인 설비·시각. 이상/점검 질문의 주 근거",
+                "description": "시간 급변 5종(부하 불균형·무효전력 급증·역률 급감·비정상 패턴·야간 이상가동) 탐지 목록. 전체 평균 ±3.5σ 밖 + 직전 시간 대비 급변인 설비·시각. 이상/점검 질문의 주 근거",
                 "parameters": {"type": "object", "properties": {}},
             },
         },
@@ -575,7 +575,7 @@ PATTERN_NAME = "pattern_anomalies.parquet"
 
 
 def get_pattern_anomalies(*, artifacts_dir: Path | None = None) -> dict[str, Any]:
-    """설비×시간 이상 6종 탐지 결과. ``{"count", "events": [{module, hour, type, metric, value,
+    """설비×시간 시간 급변 5종 탐지 결과. ``{"count", "events": [{module, hour, type, metric, value,
     baseline, z, unit, rule}]}``. 파일이 없으면 not_found."""
 
     try:
