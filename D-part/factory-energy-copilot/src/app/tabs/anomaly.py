@@ -62,6 +62,7 @@ def render(
     hourly_frame: dict[str, Any] | None = None,
     pattern: dict[str, Any] | None = None,
     features: Any = None,
+    cpart: dict[str, Any] | None = None,
 ) -> None:
     import streamlit as st
 
@@ -135,6 +136,7 @@ def render(
 
     _render_reasons(st, model)
     _render_pattern_panel(st, pattern or {"error": "not_found"})
+    _render_cpart_panel(st, cpart or {"error": "not_found"}, date_range)
 
     # 경영진 view: summary only (KPI + 상태표 + 타임라인); detail panels are for the
     # facility / energy roles.
@@ -213,6 +215,69 @@ def _render_pattern_panel(st, pattern: dict[str, Any]) -> None:
                 f"{pick} {len(rows)}건 · 평소 = 그 설비 전체 기간 평균. z = (측정 − 평균) ÷ 표준편차, "
                 f"급변 z = 직전 시간 대비 변화량의 z. 두 값이 모두 ±{k:g}σ를 넘을 때만 이상(설정에서 조정)."
             )
+
+
+def _render_cpart_panel(st, cpart: dict[str, Any], date_range=None) -> None:
+    """C파트(이상치 담당) 탐지 결과: 5초 원본 유효전력 robust z ≥ 2.88 레코드 + 조건 태그."""
+
+    from collections import Counter
+
+    with components.panel(key="an_cpart"):
+        head_l, head_r = st.columns([3, 2], vertical_alignment="center")
+        head_l.markdown(
+            components.panel_header("C파트 탐지 결과", icon_name="anomaly", tone="anomaly",
+                                    desc="5초 원본 · 전체 중앙값 대비 고전력 (2.9σ 기본)"),
+            unsafe_allow_html=True,
+        )
+        if "error" in cpart:
+            st.markdown(components.empty_state(tools_mod.CPART_NAME), unsafe_allow_html=True)
+            return
+        s = page_logic.to_date(date_range[0]) if date_range else None
+        e = page_logic.to_date(date_range[1]) if date_range else None
+        with head_r:
+            c_k, c_m = st.columns([1.3, 1.7])
+        opts = [f"{k:g}σ" for k in config.CPART_Z_OPTIONS]
+        k_lab = c_k.segmented_control("기준", opts, default=f"{config.CPART_Z_DEFAULT:g}σ", key="cpart_k",
+                                      label_visibility="collapsed") or f"{config.CPART_Z_DEFAULT:g}σ"
+        k = float(k_lab.rstrip("σ"))
+        evs = [ev for ev in cpart["events"] if ev["z"] >= k
+               and page_logic._in_range(page_logic.to_date(ev["time"][:10]), s, e)]
+        mods = Counter(ev["module"] for ev in evs)
+        pick = c_m.selectbox("설비", ["전체 설비"] + [m for m, _ in mods.most_common()],
+                             key="cpart_module", label_visibility="collapsed")
+        if pick != "전체 설비" and pick not in mods:
+            pick = "전체 설비"
+        sel = [ev for ev in evs if pick == "전체 설비" or ev["module"] == pick]
+        left, right = st.columns([1, 1.9])
+        with left:
+            conds = Counter(c for ev in sel for c in ev["conditions"])
+            st.markdown(
+                f"**{len(sel)}건** · 설비 {len({ev['module'] for ev in sel})}대 · "
+                f"유효전력 {min((ev['power_w'] for ev in sel), default=0):,.0f}–"
+                f"{max((ev['power_w'] for ev in sel), default=0):,.0f} W"
+            )
+            st.dataframe(
+                [{"설비": m, "건수": n} for m, n in Counter(ev["module"] for ev in sel).most_common()],
+                width="stretch", hide_index=True, height=200,
+            )
+            st.caption("조건 태그: " + (" · ".join(f"{c} {n}" for c, n in conds.most_common()) or "없음"))
+        with right:
+            rows = [
+                {
+                    "시각": ev["time"], "설비": ev["module"],
+                    "유효전력(W)": round(ev["power_w"], 1), "z": round(ev["z"], 2),
+                    "무효전력(var)": round(ev["reactive_var"], 1), "평균 역률(%)": round(ev["avg_pf"], 1),
+                    "조건": ", ".join(ev["conditions"]) or "—",
+                }
+                for ev in sorted(sel, key=lambda x: x["time"], reverse=True)
+            ]
+            st.dataframe(rows, width="stretch", hide_index=True, height=260)
+        st.caption(
+            f"판정: 5초 원본 유효전력 robust z = 0.6745×(값−중앙값 3,009.85W)/MAD 506.04 ≥ {k:g} "
+            f"(≈{3009.85 + k / 0.6745 * 506.04:,.0f}W 이상) · 3,369만 행 중 {len(evs)}건. "
+            "C파트 합의 기준 2.9σ(24건) 또는 2.92σ(6건), 3.0σ는 데이터 최댓값(5,221W)을 넘어 0건. "
+            "조건 태그 — 무효전력 급증 ≥ 750 var, 야간 이상가동 = 19–09시 + 5,000 W 초과."
+        )
 
 
 _REASON_CACHE: dict[tuple, list] = {}

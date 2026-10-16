@@ -123,6 +123,8 @@ UNIT_FOOTNOTE: str = "ⓘ 데이터 전력량(Wh) ÷ 1,000 = kWh · 요금 = kWh
 STATUS_THRESHOLDS_APPROVED: bool = True
 STATUS_ALERT_PATTERN_COUNT: int = 4
 STATUS_WATCH_PATTERN_COUNT: int = 2
+CPART_Z_OPTIONS: tuple = (2.9, 2.92, 2.88)  # C파트(신승현) 합의: 2.9 또는 2.92 (3.0 이상은 0건)
+CPART_Z_DEFAULT: float = 2.9
 DEFAULT_ANOMALY_K: float = 3.5  # 급변 탐지 민감도: 전체 평균 ±kσ 밖 + 직전 시간 대비 ±kσ 급변
 
 # 분석 기준 기간(검증 모드) 표시용. 예측 artifacts의 id 범위와 일치해야 한다.

@@ -228,6 +228,12 @@ def compact_tool_output(name: str, out: Any) -> Any:
                         "value": round(float(e["value"]), 2), "mean": round(float(e["baseline"]), 2),
                         "unit": e.get("unit")} for e in evs[:40]],
         }
+    if name == "get_cpart_anomalies":
+        evs = out.get("events", [])
+        return {"count": len(evs), "basis": out.get("basis"),
+                "by_module": dict(Counter(e["module"] for e in evs)),
+                "by_condition": dict(Counter(c for e in evs for c in e["conditions"])),
+                "events": [{k: e[k] for k in ("time", "module", "power_w", "z", "conditions")} for e in evs[:30]]}
     if name == "get_anomaly_trend":
         pts = out.get("points", [])
         return {"count": len(pts), "points": pts[-60:]}

@@ -471,6 +471,7 @@ def get_anomaly_trend(
 
 # Registry used by the agent for OpenAI function calling (name -> callable).
 TOOL_REGISTRY = {
+    "get_cpart_anomalies": lambda artifacts_dir=None, z_min=None, **_: get_cpart_anomalies(artifacts_dir=artifacts_dir, z_min=z_min),
     "get_pattern_anomalies": lambda artifacts_dir=None, **_: get_pattern_anomalies(artifacts_dir=artifacts_dir),
     "get_forecast_summary": get_forecast_summary,
     "get_evaluation": get_evaluation,
@@ -484,6 +485,14 @@ def openai_tool_schemas() -> list[dict[str, Any]]:
     """Return OpenAI ``tools`` function schemas for the five artifacts-only tools."""
 
     return [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_cpart_anomalies",
+                "description": "C파트(이상치 담당) 탐지 결과: 5초 원본 유효전력이 전체 중앙값 대비 robust z ≥ 2.9(기본, 24건)인 레코드와 조건 태그(무효전력 급증·야간 이상가동 등). z_min 2.92면 6건",
+                "parameters": {"type": "object", "properties": {"z_min": {"type": "number", "enum": [2.88, 2.9, 2.92]}}},
+            },
+        },
         {
             "type": "function",
             "function": {
@@ -577,3 +586,49 @@ def get_pattern_anomalies(*, artifacts_dir: Path | None = None) -> dict[str, Any
         if hasattr(h, "strftime"):
             r["hour"] = h.strftime("%Y-%m-%d %H:%M:%S")
     return {"count": len(rows), "events": rows}
+
+
+# ---------------------------------------------------------------------------
+# C파트(이상치 담당) 탐지 결과 — 5초 원본 유효전력 robust z ≥ 2.88 레코드 + 조건 태그
+# ---------------------------------------------------------------------------
+CPART_NAME = "c_part_2_88sigma_conditions.csv"
+CPART_COND_LABELS = {
+    "1_저전압": "저전압", "2_저역률": "저역률", "3_부하불균형": "부하 불균형", "4_무효전력급증": "무효전력 급증",
+    "5_역률급감": "역률 급감", "6_비정상패턴": "비정상 패턴", "7_야간이상가동": "야간 이상가동",
+    "8_전류만증가": "전류만 증가",
+}
+
+
+def get_cpart_anomalies(*, artifacts_dir: Path | None = None, z_min: float | None = None) -> dict[str, Any]:
+    """C파트 2.88σ 탐지 레코드. ``{"count", "events": [{module, time, hour, night, power_w,
+    reactive_var, z, avg_pf, imbalance_pct, conditions:[라벨]}]}``."""
+
+    try:
+        path = resolve_artifact_path(CPART_NAME, artifacts_dir=artifacts_dir)
+    except PathSecurityError as exc:
+        return _error("path_denied", str(exc))
+    if not path.exists():
+        return _error("not_found", f"{CPART_NAME} 없음 ({NO_DATA})")
+    with path.open("r", encoding="utf-8-sig", newline="") as fh:
+        raw = list(csv.DictReader(fh))
+    events = []
+    for r in raw:
+        lt = str(r.get("localtime", ""))
+        t = f"{lt[:4]}-{lt[4:6]}-{lt[6:8]} {lt[8:10]}:{lt[10:12]}:{lt[12:14]}" if len(lt) >= 14 else lt
+        conds = [lab for key, lab in CPART_COND_LABELS.items() if str(r.get(key, "")).strip().lower() == "true"]
+        try:
+            events.append({
+                "module": r["equipment"], "time": t, "hour": int(r.get("hour") or 0),
+                "night": str(r.get("is_night", "")).lower() == "true",
+                "power_w": float(r["activePower"]), "reactive_var": float(r["reactivePower"]),
+                "z": float(r["z_score"]), "avg_pf": float(r["avg_pf"]),
+                "imbalance_pct": float(r["imbalance_ratio"]), "conditions": conds,
+            })
+        except (KeyError, ValueError):
+            continue
+    k = float(config.CPART_Z_DEFAULT if z_min is None else z_min)
+    events = [e for e in events if e["z"] >= k]  # 2.88 결과의 부분집합: 2.9 → 24건, 2.92 → 6건
+    events.sort(key=lambda e: e["time"])
+    thr_w = 3009.85 + k / 0.6745 * 506.04
+    return {"count": len(events), "events": events, "z_min": k,
+            "basis": f"5초 원본 유효전력 robust z = 0.6745×(값−중앙값 3,009.85W)/MAD 506.04 ≥ {k:g} (≈{thr_w:,.0f}W 이상)"}

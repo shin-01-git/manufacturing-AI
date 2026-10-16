@@ -276,6 +276,7 @@ def main() -> None:
             role=role,
             hourly_frame=bundle.get("anomaly_hourly_frame"),
             pattern=pattern,
+            cpart=bundle.get("cpart"),
             features=(bundle.get("features_hourly") or {}).get("frame"),
         )
     elif page == page_logic.PAGE_COPILOT:

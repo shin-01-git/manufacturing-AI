@@ -142,6 +142,7 @@ def load_bundle(artifacts_dir: Path | None = None) -> dict[str, Any]:
     bundle["quality"] = _load_parquet_frame(QUALITY_NAME, artifacts_dir)
     bundle["selection"] = tools_mod.get_selection(artifacts_dir=artifacts_dir)
     bundle["pattern"] = tools_mod.get_pattern_anomalies(artifacts_dir=artifacts_dir)
+    bundle["cpart"] = tools_mod.get_cpart_anomalies(artifacts_dir=artifacts_dir, z_min=2.88)  # 화면에서 2.9/2.92로 거름
     bundle["features_hourly"] = _load_parquet_frame("module_hourly_features.parquet", artifacts_dir)
     bundle["minute_recent"] = _load_parquet_frame("module_minute_recent.parquet", artifacts_dir)
     fh = bundle["features_hourly"]
@@ -172,6 +173,7 @@ def load_bundle(artifacts_dir: Path | None = None) -> dict[str, Any]:
 _SIGNATURE_FILES = (
     "predictions.csv", "forecast_bpart.csv", "forecast_bpart_meta.json", "evaluation.json",
     "evaluation_bpart.json", "model_selection_bpart.json", "pattern_anomalies.parquet",
+    "c_part_2_88sigma_conditions.csv",
     "module_hourly_features.parquet", "module_minute_recent.parquet", "module_status.csv", "anomaly_events.parquet",
     "anomaly_hourly.parquet", ACTUAL_VS_PRED_NAME, HOURLY_MODULES_NAME, REBUILD_META_NAME,
     SELECTION_NAME,
