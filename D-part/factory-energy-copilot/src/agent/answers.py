@@ -70,6 +70,10 @@ GLOSSARY = {
     "비정상 패턴": "그 설비 평균에서 크게 벗어나면서 직전 시간 대비 급격히 변한 사용량입니다.",
     "mae": "평균 절대 오차입니다. 시간마다 |실제 − 예측|을 평균한 값(Wh)으로, 작을수록 정확합니다.",
     "σ": "표준편차입니다. ±3.5σ 밖은 정규분포에서 약 0.05% 확률의 드문 값입니다.",
+    "robust z": "중앙값과 MAD(중앙값 절대편차)로 계산한 z입니다. z = 0.6745 × (값 − 중앙값) ÷ MAD. 평균·표준편차보다 극단값에 덜 흔들립니다.",
+    "5초 고전력": "5초 측정 유효전력의 robust z가 2.9 이상인 측정입니다(약 5,186W 이상). 12/01–04/29에 24건입니다.",
+    "시간 급변": "1시간 집계 값이 설비 전체 평균 ±3.5σ 밖이면서 직전 시간 대비 변화도 ±3.5σ를 넘는 시간입니다(야간 3.0σ). 27건입니다.",
+    "이상치": "5초 고전력(24건)과 시간 급변(27건)을 합친 51건입니다. 이상치 5건 이상 설비 = 이상, 3–4건 = 주의.",
 }
 
 
@@ -177,21 +181,23 @@ def answer(question: str, *, artifacts_dir: Path | None = None) -> dict[str, Any
             row = next((r for r in status_all["modules"] if r["module"] == m), {})
             mine = [e for e in evs if e["module"] == m]
             by_t = Counter(config.ANOMALY_TYPE_LABELS.get(e["type"], e["type"]) for e in mine)
-            lines.append(f"{m}: 상태 {row.get('status', '—')} · 급변 탐지 {len(mine)}건"
-                         + (f" ({' · '.join(f'{t} {n}' for t, n in by_t.most_common())})" if mine else ""))
+            cp = tools_mod.get_cpart_anomalies(artifacts_dir=artifacts_dir)
+            cp_m = [c for c in cp.get("events", []) if c["module"] == m] if "error" not in cp else []
+            lines.append(f"{m}: 상태 {row.get('status', '—')} · 이상치 {len(mine) + len(cp_m)}건 "
+                         f"(시간 급변 {len(mine)} · 5초 고전력 {len(cp_m)})")
+            if mine:
+                lines.append("  - 시간 급변 유형: " + " · ".join(f"{t} {n}" for t, n in by_t.most_common()))
             for e in mine[-3:]:
                 diff = (e["value"] - e["baseline"]) / e["baseline"] * 100 if e["baseline"] else 0
                 lines.append(f"  - {e['hour'][:13]}시 {config.ANOMALY_TYPE_LABELS.get(e['type'], e['type'])}: "
                              f"{e['value']:,.1f}{e.get('unit', '')} (평균 {e['baseline']:,.1f}, {diff:+.1f}%)")
-            cp = tools_mod.get_cpart_anomalies(artifacts_dir=artifacts_dir)
-            cp_m = [c for c in cp.get("events", []) if c["module"] == m] if "error" not in cp else []
             if cp_m:
                 tags = Counter(t for c in cp_m for t in c["conditions"])
                 lines.append(f"  - 5초 고전력 탐지(2.9σ): {len(cp_m)}건, 최고 {max(c['power_w'] for c in cp_m):,.0f}W"
                              + (f" · {' · '.join(f'{t} {n}' for t, n in tags.most_common())}" if tags else ""))
             if row.get("anomaly_count"):
                 lines.append(f"  - 참고: 5초 순간 기준 미달 {row['anomaly_count']:,}행(비율 {row['anomaly_ratio'] * 100:.2f}%) — 경고 기준 아님")
-        lines.append(f"판정: 급변 {config.STATUS_ALERT_PATTERN_COUNT}건 이상 = 이상, "
+        lines.append(f"판정: 이상치 {config.STATUS_ALERT_PATTERN_COUNT}건 이상 = 이상, "
                      f"{config.STATUS_WATCH_PATTERN_COUNT}건 이상 = 주의 (12/01–04/29 측정)")
         return {"text": "\n".join(lines), "sources": [tools_mod.PATTERN_NAME, tools_mod.MODULE_STATUS_NAME]}
 
@@ -263,13 +269,13 @@ def answer(question: str, *, artifacts_dir: Path | None = None) -> dict[str, Any
             f"- 시간 급변: 설비별 전체 평균 ±{config.DEFAULT_ANOMALY_K:g}σ 밖 + 직전 시간 대비 급변",
             "- 유형: " + " · ".join(f"{t} {n}" for t, n in by_type.most_common()),
             f"- 점검 우선: 이상 {', '.join(alert) or '없음'} / 주의 {len(watch)}대",
-            "- 설비별 상위: " + " · ".join(f"{m} {n}건" for m, n in by_mod.most_common(3)),
+            "- 시간 급변 설비별 상위: " + " · ".join(f"{m} {n}건" for m, n in by_mod.most_common(3)),
             *([f"- 5초 고전력 탐지(2.9σ): {cp['count']}건, 상위 "
                + " · ".join(f"{m} {n}건" for m, n in Counter(c['module'] for c in cp['events']).most_common(3))]
               if "error" not in (cp := tools_mod.get_cpart_anomalies(artifacts_dir=artifacts_dir)) else []),
-            "가능한 원인 후보",
+            "\n가능한 원인 후보",
             "- 부하 불균형: 단상 부하 편중·한 상 접촉 불량 / 역률 급감: 무부하 운전·콘덴서 이상",
-            "현장 확인 항목",
+            "\n현장 확인 항목",
             "- 해당 시각 운전 일지와 상별 전류 측정값 대조",
         ]
         return {"text": "\n".join(lines), "sources": [tools_mod.PATTERN_NAME, tools_mod.MODULE_STATUS_NAME]}

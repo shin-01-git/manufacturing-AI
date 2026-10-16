@@ -119,10 +119,10 @@ UNIT_FOOTNOTE: str = "ⓘ 데이터 전력량(Wh) ÷ 1,000 = kWh · 요금 = kWh
 # O-3 상태 경계값 (확정). 설비 상태 = 규칙 이상 비율 + 이상 6종(패턴) 탐지 건수
 #   10/16 멘토 피드백(거짓 양성 과다)으로 상태는 '급격한 변화' 탐지 건수만 본다.
 #   5초 단위 기준 미달(규칙 이벤트)은 거의 매시간 생기는 순간 저하라 상태·경고에서 제외(참고 표시).
-#   이상: 급변 탐지 ≥ 4건 · 주의: 2–3건 · 정상: 0–1건 (1건은 우연 수준이라 상태에 반영하지 않음)
+#   이상치 = 시간 급변 + C파트 5초 고전력(2.9σ). 이상: 이상치 ≥ 5건 · 주의: 3–4건 · 정상: 0–2건 (설비당 평균 약 4건)
 STATUS_THRESHOLDS_APPROVED: bool = True
-STATUS_ALERT_PATTERN_COUNT: int = 4
-STATUS_WATCH_PATTERN_COUNT: int = 2
+STATUS_ALERT_PATTERN_COUNT: int = 5
+STATUS_WATCH_PATTERN_COUNT: int = 3
 # 예상 탄소비용 기본 단가(가정): 국내 배출권 KAU 시세 10,500원/tCO2 (SK증권 탄소배출권 리포트, 2025-10-01 기준).
 # 설정 화면에서 바꿀 수 있다. 실제 부과액이 아니라 '배출권으로 환산한 비용' 가정치.
 DEFAULT_CARBON_PRICE: float = 10500.0

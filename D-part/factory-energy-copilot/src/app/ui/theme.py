@@ -349,3 +349,7 @@ def register_template() -> None:
         ),
     )
     pio.templates[FEC_TEMPLATE_NAME] = template
+
+
+# 이상치 타임라인 유형 색(차트·범례 공용)
+TIMELINE_PALETTE = ["#0E9F8E", "#D97706", "#6366F1", "#DB2777", "#0EA5E9", "#65A30D", "#9333EA", "#B45309"]

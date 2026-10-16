@@ -111,7 +111,7 @@ def render(settings: dict[str, Any]) -> None:
                 "야간 종료", min_value=0, max_value=23, value=int(settings["night_end"]), step=1,
                 key=_KEYS["night_end"], on_change=_store, args=("night_end",),
                 label_visibility="collapsed"))
-            st.caption("화면 경고 표시 기준만 바뀝니다. 탐지 규칙 변경은 배치 재실행 필요.")
+            st.caption("민감도(σ)·야간 시간대는 시간 급변 탐지에 바로 반영됩니다. 값은 저장돼 다시 열어도 유지됩니다.")
 
     with components.panel(height=H_SLACK, key=PANEL_SLACK):
         c1, c2, c3 = st.columns([6, 2, 2], vertical_alignment="center")
@@ -139,9 +139,12 @@ def render(settings: dict[str, Any]) -> None:
             components.html_table(
                 ["규칙", "값"],
                 [
-                    ["이상 탐지 (O-9)", f"전압 {config.VOLTAGE_THRESHOLD:g}V 미만 또는 역률 {config.POWER_FACTOR_THRESHOLD:g}% 미만, 3상 동시"],
-                    ["예측구간 (O-7)", "P5–P95 (잠정)"],
-                    ["MAE 73/89 (O-10)", "참고용 — 합격 기준 아님"],
+                    ["이상치", "5초 고전력 + 시간 급변 (합산)"],
+                    ["5초 고전력", f"유효전력 robust z ≥ {config.CPART_Z_DEFAULT:g} (팀 합의, 2.92 선택 가능)"],
+                    ["시간 급변", "설비 전체 평균 ±σ 밖 + 직전 시간 대비 ±σ 급변 (σ는 위 민감도)"],
+                    ["설비 상태", f"이상치 {config.STATUS_ALERT_PATTERN_COUNT}건 이상 = 이상, {config.STATUS_WATCH_PATTERN_COUNT}–{config.STATUS_ALERT_PATTERN_COUNT - 1}건 = 주의"],
+                    ["예측구간", "과거 검증 잔차 P5–P95 (약 −162 ~ +160 Wh)"],
+                    ["예측 모델", "LightGBM · 5월 MAE 84.3 Wh"],
                 ],
             ),
             unsafe_allow_html=True,

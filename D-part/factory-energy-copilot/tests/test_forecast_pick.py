@@ -125,9 +125,9 @@ def test_module_status_label_thresholds():
     from src.agent import tools
     # 상태 = 급변 탐지 건수만 (5초 기준 미달 비율은 참고)
     assert tools.module_status_label(0.5, 0) == "정상"
-    assert tools.module_status_label(0.0, 1) == "정상"
-    assert tools.module_status_label(0.0, 2) == "주의"
-    assert tools.module_status_label(0.0, 4) == "이상"
+    assert tools.module_status_label(0.0, 2) == "정상"
+    assert tools.module_status_label(0.0, 3) == "주의"
+    assert tools.module_status_label(0.0, 5) == "이상"
 
 
 def test_load_series_daily_and_recent():

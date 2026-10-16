@@ -13,3 +13,4 @@ openai>=1.0
 # 테스트
 pytest>=7.0
 hypothesis>=6.0
+lightgbm>=4.0  # scripts/bpart_interval.py (예측구간 계산)

@@ -35,7 +35,7 @@ PAGE_DESC = {
     page_logic.PAGE_EQUIPMENT: "설비별 전력 소비 추이·비교·부하 패턴 (학습 원본 실측)",
     page_logic.PAGE_ANOMALY: "관찰 기록 기반 이상 구간 — 설비 판정이 아닌 징후 표시",
     page_logic.PAGE_COPILOT: "숫자는 artifacts 계산값, 서술은 AI/규칙 요약",
-    page_logic.PAGE_SETTINGS: "단가·계수·화면 경고 기준 (세션 한정)",
+    page_logic.PAGE_SETTINGS: "단가·계수·탐지 민감도 (저장됨)",
 }
 
 

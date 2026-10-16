@@ -30,7 +30,7 @@ PANEL_PROFILE = "hm_profile"
 
 H_MAIN = 330
 H_BOTTOM = 250
-H_FLOW = 250
+H_FLOW = None  # 단계 카드 6개가 두 줄이 돼도 잘리지 않게 자동 높이
 H_LOW = 360
 
 METRIC_OPTIONS = ["요금", "탄소", "전력량"]
@@ -47,6 +47,7 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> None:
     evaluation = bundle["evaluation"]
     settings = ctx["settings"]
     alerts = ctx["alerts"]
+    ctx = {**ctx, "module_status": bundle.get("module_status") or {}}
     # B-part 선택 모델 예측(forecast_bpart.csv)이 있으면 홈 예측 그래프·KPI는 그것을 쓴다.
     bpart = bundle.get("forecast_bpart") or {}
     if "error" not in bpart and bpart.get("count", 0) > 0:
@@ -99,8 +100,8 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> None:
     panels = {
         "period": lambda: _render_period_panel(st, rows, unit, start, end, forecast_ok),
         "cost": lambda: _render_cost_panel(st, totals, settings, forecast_ok),
-        "report": lambda: _render_report_panel(st, bundle, totals, settings),
-        "top_modules": lambda: _render_top_modules_panel(st, bundle),
+        "report": lambda: _render_report_panel(st, bundle, totals, settings, ctx),
+        "top_modules": lambda: _render_top_modules_panel(st, bundle, ctx),
     }
     row3 = [k for k in profile["home_row3"] if k != "period"]  # 기간 합계는 예측 패널 보기로 통합
     for col, key in zip(st.columns(len(row3)), row3):
@@ -108,7 +109,7 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> None:
             panels[key]()
 
     if ctx.get("role") == page_logic.ROLE_EXECUTIVE:
-        _render_executive_report(st, bundle, settings)
+        _render_executive_report(st, bundle, settings, ctx)
 
     # Second screen (예측 근거): analysis detail for the energy role only.
     if profile["home_detail"]:
@@ -121,7 +122,7 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
-def _render_executive_report(st, bundle, settings) -> None:
+def _render_executive_report(st, bundle, settings, ctx=None) -> None:
     """경영진 월간 경영 보고: 결론 먼저 → 전월 대비(총량·일평균) → 설비별 탄소 비중 → 감축 검토."""
 
     frame = (bundle.get("modules_hourly") or {}).get("frame")
@@ -187,8 +188,9 @@ def _render_executive_report(st, bundle, settings) -> None:
                 for x in r["ranking"]
             ]
             st.dataframe(rows, hide_index=True, height=300, width="stretch")
-            if r["watch"]:
-                st.caption("이상 징후 관찰 설비: " + ", ".join(r["watch"]) + " (관찰 기록, 판정 아님)")
+            alert_mods = [x["module"] for x in _status_rows(ctx or {}) if x["status"] == "이상"]
+            if alert_mods:
+                st.caption(f"점검 대상(이상치 {config.STATUS_ALERT_PATTERN_COUNT}건 이상): " + ", ".join(alert_mods))
         st.caption("총량 증감에는 달마다 다른 날짜 수가 섞여 있어 사용 수준 변화는 일평균으로 판단합니다. "
                    "전년 대비는 데이터가 5개월뿐이라 제공하지 않습니다.")
 
@@ -244,6 +246,17 @@ def _picked_period(st, rows, unit, start, end):
 
 def _unified(ctx) -> list:
     return page_logic.unified_anomalies(ctx.get("pattern"), ctx.get("cpart"))
+
+
+def _status_rows(ctx) -> list:
+    """설비별 이상치 집계(이상치 많은 순). 이상치 모니터링 상태표와 같은 기준."""
+
+    status = ctx.get("module_status") or {}
+    try:
+        rows = page_logic.unified_status(status, _unified(ctx))
+    except Exception:  # noqa: BLE001
+        return []
+    return sorted(rows, key=lambda r: -r["total"])
 
 
 def _watch_modules(ctx) -> int:
@@ -381,8 +394,10 @@ def _render_kpis(st, bundle, ctx, forecast_ok, totals, buckets, unit, profile, k
             icon_name="anomaly", tone="anomaly",
         ),
         "watchmods": components.kpi_tile(
-            "점검 필요 설비", f"{_watch_modules(ctx)}대",
-            sub=f"이상치 {config.STATUS_WATCH_PATTERN_COUNT}건 이상 (이상 ≥ {config.STATUS_ALERT_PATTERN_COUNT}건)",
+            "이상 · 주의 설비",
+            (lambda rs: f"{sum(r['status'] == '이상' for r in rs)} · {sum(r['status'] == '주의' for r in rs)}")(_status_rows(ctx)),
+            unit="대",
+            sub=f"이상 ≥ {config.STATUS_ALERT_PATTERN_COUNT}건 · 주의 {config.STATUS_WATCH_PATTERN_COUNT}–{config.STATUS_ALERT_PATTERN_COUNT - 1}건 (이상치)",
             icon_name="alert_sq",
         ),
         "found": components.kpi_tile(
@@ -392,7 +407,7 @@ def _render_kpis(st, bundle, ctx, forecast_ok, totals, buckets, unit, profile, k
         ),
         "alerts": components.kpi_tile(
             "경고 건수", str(alerts["count"]) if not alerts["errors"] else dash,
-            sub="이상 6종 급변 탐지 (과거 측정 기준)", icon_name="anomaly", icon_tone="warn",
+            sub="이상치 · 5초 고전력 + 시간 급변 (12/01–04/29)", icon_name="anomaly", icon_tone="warn",
         ),
     }
     for col, key in zip(st.columns(5), profile["kpis"]):
@@ -660,7 +675,7 @@ def _render_cost_panel(st, totals, settings, forecast_ok) -> None:
             return
         cost = totals["carbon_cost"]
         rows = [
-            ["전기요금", fmt.fmt_bill(totals["bill"]), f"Σ pred_pow × {settings['bill_rate']:g}"],
+            ["전기요금", fmt.fmt_bill(totals["bill"]), f"예측 kWh × {settings['bill_rate']:g}"],
             [
                 "예상 탄소비용(가정)",
                 fmt.fmt_bill(cost) if cost is not None else "단가 미설정",
@@ -682,7 +697,7 @@ def _render_cost_panel(st, totals, settings, forecast_ok) -> None:
         st.caption(cap)
 
 
-def _render_report_panel(st, bundle, totals, settings) -> None:
+def _render_report_panel(st, bundle, totals, settings, ctx=None) -> None:
     status = bundle["module_status"]
     evaluation = bundle["evaluation"]
     with components.panel(height=H_BOTTOM, key=PANEL_REPORT):
@@ -699,17 +714,18 @@ def _render_report_panel(st, bundle, totals, settings) -> None:
             lines.append(f"예측 합계: {tools_mod.NO_DATA}.")
         mae = evaluation.get("mae_hourly_pow") if "error" not in evaluation else None
         if isinstance(mae, dict):
-            lines.append(f"전력량 MAE(504)는 {fmt.fmt_mae(mae.get('mae504'))}입니다 (참고용, 합격 기준 아님).")
+            lines.append(f"5월 예측 오차(MAE)는 시간당 {fmt.fmt_mae(mae.get('mae504'))} Wh입니다.")
         else:
             lines.append(f"MAE: {tools_mod.NO_DATA}.")
-        top = ui_logic.top_anomaly_modules(status, limit=1) if "error" not in status else []
-        if top:
-            t = top[0]
+        srows = _status_rows(ctx or {})
+        if srows:
+            alert_mods = [r["module"] for r in srows if r["status"] == "이상"]
             lines.append(
-                f"이상 비율이 가장 높은 설비는 {t['module']} ({fmt.fmt_ratio_pct(t['anomaly_ratio'])}), 관찰 기록일 뿐 설비 판정이 아닙니다."
+                f"이상치 {sum(r['total'] for r in srows)}건, 점검 대상 {len(alert_mods)}대"
+                + (f"(최다 {srows[0]['module']} {srows[0]['total']}건)" if srows else "") + "입니다."
             )
         else:
-            lines.append("규칙 기준 이상 징후 설비는 관찰되지 않았습니다.")
+            lines.append("탐지된 이상치가 없습니다.")
         st.markdown(components.ai_card_lines(lines), unsafe_allow_html=True)
         st.button(
             "AI Copilot에서 열기 ›", key="open_copilot", type="tertiary",
@@ -717,30 +733,23 @@ def _render_report_panel(st, bundle, totals, settings) -> None:
         )
 
 
-def _render_top_modules_panel(st, bundle) -> None:
-    status = bundle["module_status"]
+def _render_top_modules_panel(st, bundle, ctx=None) -> None:
     with components.panel(height=H_BOTTOM, key=PANEL_TOP):
         st.markdown(
-            components.panel_header("이상 비율 상위 설비", icon_name="anomaly", tone="anomaly"),
+            components.panel_header("이상치 상위 설비", icon_name="anomaly", tone="anomaly",
+                                    desc="5초 고전력 + 시간 급변"),
             unsafe_allow_html=True,
         )
-        if "error" in status:
-            st.markdown(
-                components.error_state(artifact=tools_mod.MODULE_STATUS_NAME), unsafe_allow_html=True
-            )
-            return
-        top = [r for r in ui_logic.top_anomaly_modules(status, limit=5) if r.get("anomaly_count")]
+        top = [r for r in _status_rows(ctx or {}) if r["total"]][:5]
         if not top:
-            st.markdown('<div class="fec-calm">기록된 이상 징후 설비 없음</div>', unsafe_allow_html=True)
+            st.markdown('<div class="fec-calm">탐지된 이상치 없음</div>', unsafe_allow_html=True)
             return
-        rows = [
-            [r["module"], fmt.fmt_count(r["anomaly_count"]), fmt.fmt_ratio_pct(r["anomaly_ratio"])]
-            for r in top
-        ]
+        rows = [[r["module"], r["status"], f"{r['total']}건", r["main_type"]] for r in top]
         st.markdown(
-            components.html_table(["설비", "이상 건수", "이상 비율"], rows), unsafe_allow_html=True
+            components.html_table(["설비", "상태", "이상치", "주요 유형"], rows), unsafe_allow_html=True
         )
-        st.caption("관찰 기록일 뿐 설비 판정이 아님 (상태 기준 O-3 미확정)")
+        st.caption(f"이상 = 이상치 {config.STATUS_ALERT_PATTERN_COUNT}건 이상 · 주의 = "
+                   f"{config.STATUS_WATCH_PATTERN_COUNT}–{config.STATUS_ALERT_PATTERN_COUNT - 1}건 · 기간 12/01–04/29")
 
 
 # ---------------------------------------------------------------------------
@@ -801,7 +810,7 @@ def _render_models(st, bundle) -> None:
         heads = ["모델", "종류", "과거 검증 MAE"] + (["5월 MAE"] if has_may else [])
         st.markdown(components.html_table(heads, rows, highlight_rows=hl), unsafe_allow_html=True)
         st.caption(f"선정 모델: {page_logic.MODEL_LABELS.get(selected, selected) or tools_mod.NO_DATA} · "
-                   "MAE 단위 Wh · 73/89는 참고용(합격 기준 아님)")
+                   "MAE 단위 Wh(시간당 평균 오차)")
 
 
 def _render_profile(st, rows, settings, forecast_ok, avp=None) -> None:

@@ -59,10 +59,10 @@ ROLE_PROFILES: dict[str, dict[str, Any]] = {
         "home_detail": False,
         "metric": "전력량",
         "anomaly_detail": True,
-        "summary": "이상 구간·설비 중심 (상태표, 이벤트, 드릴다운)",
+        "summary": "이상치·설비 중심 (상태표, 타임라인, 탐지 근거)",
         "questions": [
             "주의해서 볼 설비가 있어?",
-            "이상 이벤트가 많은 설비를 알려줘",
+            "이상치가 많은 설비를 알려줘",
             "야간에 전력을 많이 쓰는 설비는?",
             "부하 패턴 요약해 줘",
         ],

@@ -295,7 +295,7 @@ def build_briefing(
     limit = 3 if audience in (EXECUTIVE, ENERGY) else 5
     watch = watch_module_rows(status, limit)
     approved = bool(config.STATUS_THRESHOLDS_APPROVED)
-    watch_chips = [(m, f"급변 {int(v)}건" if approved else fmt.fmt_ratio_pct(v)) for m, v, _ in watch]
+    watch_chips = [(m, f"이상치 {int(v)}건" if approved else fmt.fmt_ratio_pct(v)) for m, v, _ in watch]
     for m, ratio_text in watch_chips:
         calc.add(f"{'급변 탐지' if approved else '이상 비율'} {m}", ratio_text, STAT)
     events_ok = "error" not in events
@@ -309,7 +309,7 @@ def build_briefing(
         if not watch:
             return BriefLine(label, "점검이 필요한 설비는 없습니다.", sources=[STAT])
         if approved:
-            return BriefLine(label, "급격한 변화가 반복된 설비입니다 (이상·주의, 원인 단정 아님).",
+            return BriefLine(label, "이상치가 많은 설비입니다 (이상·주의, 원인 단정 아님).",
                              tone="watch", sources=[STAT, PAT], chips=watch_chips)
         return BriefLine(label, "설비별 이상 비율입니다 (관찰 기록, 설비 판정 아님).",
                          tone="watch", sources=[STAT], chips=watch_chips)

@@ -8,6 +8,13 @@ font = "sans serif"
 
 [server]
 headless = true
+# 코드 파일 감시 끔(.venv·data 폴더 감시로 CPU를 먹음). 코드 수정 후에는 서버 재시작.
+fileWatcherType = "none"
+runOnSave = false
 
 [browser]
 gatherUsageStats = false
+
+[runner]
+# 위젯 클릭 시 이전 실행을 기다리지 않고 바로 다시 그린다
+fastReruns = true

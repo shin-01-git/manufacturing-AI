@@ -70,7 +70,7 @@ def forecast_band_chart(
     rows: list[dict[str, Any]],
     *,
     actuals: dict[str, float] | None = None,
-    interval_label: str = "예측구간 P5–P95 (잠정)",
+    interval_label: str = "예측구간 P5–P95",
     height: int = 360,
     metric: str = "pow",
     color: str | None = None,
@@ -1076,7 +1076,7 @@ def unified_timeline(anomalies: list[dict[str, Any]], modules: list[str], *, hei
             fig.add_trace(go.Scatter(
                 x=[a["time"] for a in pts], y=[a["module"] for a in pts], mode="markers",
                 name=f"{t} · {src}", marker=dict(size=11, symbol=sym, color=palette[i % len(palette)],
-                                                 line=dict(width=1, color="#FFFFFF")),
+                                                 line=dict(width=1, color=theme.token("surface"))),
                 customdata=[[a["type"], a["source"], a["detail"]] for a in pts],
                 hovertemplate="%{y}<br>%{x}<br>%{customdata[0]} · %{customdata[1]}<br>%{customdata[2]}<extra></extra>",
             ))
@@ -1091,7 +1091,7 @@ def unified_timeline(anomalies: list[dict[str, Any]], modules: list[str], *, hei
     return fig
 
 
-_TL_PALETTE = ["#0E9F8E", "#D97706", "#6366F1", "#DB2777", "#0EA5E9", "#65A30D", "#9333EA", "#B45309"]
+_TL_PALETTE = theme.TIMELINE_PALETTE
 
 
 def timeline_types(anomalies: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
@@ -1111,11 +1111,11 @@ def timeline_legend_html(anomalies: list[dict[str, Any]]) -> str:
     cnt = Counter(a["type"].split("(")[0] for a in anomalies)
     chips = "".join(
         f'<span style="display:inline-flex;align-items:center;gap:4px;margin:0 10px 4px 0;'
-        f'font-size:12px;color:#334155;white-space:nowrap">'
+        f'font-size:12px;color:{theme.token("text")};white-space:nowrap">'
         f'<span style="width:9px;height:9px;border-radius:50%;background:{palette[i % len(palette)]};'
         f'display:inline-block"></span>{t} {cnt[t]}</span>'
         for i, t in enumerate(types)
     )
-    shapes = ('<span style="font-size:11.5px;color:#64748B;white-space:nowrap">'
+    shapes = (f'<span style="font-size:11.5px;color:{theme.token("muted")};white-space:nowrap">'
               '◆ 5초 고전력 · ● 시간 급변</span>')
     return f'<div style="display:flex;flex-wrap:wrap;align-items:center;margin:0 0 2px">{chips}{shapes}</div>'

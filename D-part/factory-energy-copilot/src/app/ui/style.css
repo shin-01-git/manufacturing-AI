@@ -445,7 +445,7 @@ section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] > div > [d
 .fec-tile-num { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--fec-text); line-height: 1.15; }
 .fec-tile-unit { font-size: 15px; font-weight: 500; color: var(--fec-muted); }
 .fec-tile-sub { font-size: 12.5px; color: var(--fec-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.fec-delta { margin-left: 6px; background: var(--fec-chip-bg); color: var(--fec-text); border-radius: 6px; padding: 1px 7px; font-size: 12px; font-weight: 500; }
+.fec-delta { margin-left: 6px; background: var(--fec-chip-bg); color: var(--fec-text); border-radius: 6px; padding: 1px 7px; font-size: 12px; font-weight: 500; white-space: nowrap; }
 .fec-tile.fec-tile-off { background: var(--fec-calc-inner); }
 .fec-tile.fec-tile-off .fec-tile-icon { background: var(--fec-faint); }
 /* 경고 건수: 경고 목록 행과 같은 노란 경고 아이콘 */
