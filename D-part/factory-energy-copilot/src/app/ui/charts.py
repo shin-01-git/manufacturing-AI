@@ -1056,3 +1056,66 @@ def load_series_chart(series: dict[str, Any], *, height: int = 260):
                       yaxis=dict(title=f"{series['title']}({series['unit']})", range=list(rng) if rng else None),
                       xaxis=dict(title="", type="category", nticks=8))
     return fig
+
+
+def unified_timeline(anomalies: list[dict[str, Any]], modules: list[str], *, height: int = 320):
+    """이상치 타임라인: x = 발생 시각, y = 설비, 색 = 유형, 모양 = 출처(5초 고전력 ◆ / 시간 급변 ●)."""
+
+    import plotly.graph_objects as go
+
+    if not anomalies:
+        return _empty_fig("선택 기간 이상치 없음")
+    _ensure_template()
+    types, palette = timeline_types(anomalies)
+    fig = go.Figure()
+    for i, t in enumerate(types):
+        for src, sym in (("5초 고전력", "diamond"), ("시간 급변", "circle")):
+            pts = [a for a in anomalies if a["type"].split("(")[0] == t and a["source"] == src]
+            if not pts:
+                continue
+            fig.add_trace(go.Scatter(
+                x=[a["time"] for a in pts], y=[a["module"] for a in pts], mode="markers",
+                name=f"{t} · {src}", marker=dict(size=11, symbol=sym, color=palette[i % len(palette)],
+                                                 line=dict(width=1, color="#FFFFFF")),
+                customdata=[[a["type"], a["source"], a["detail"]] for a in pts],
+                hovertemplate="%{y}<br>%{x}<br>%{customdata[0]} · %{customdata[1]}<br>%{customdata[2]}<extra></extra>",
+            ))
+    # 범례는 차트 밖 HTML(timeline_legend_html)로 그린다 — 좁은 패널에서 plotly 범례가 점·축과 겹침
+    fig.update_layout(
+        template=_TPL, height=height, showlegend=False,
+        xaxis=dict(title="", type="date", tickformat="%m/%d", tickfont=dict(size=10)),
+        yaxis=dict(title="", type="category", categoryorder="array", categoryarray=list(reversed(modules)),
+                   tickfont=dict(size=10), automargin=True),
+        margin=dict(l=8, r=8, t=4, b=4),
+    )
+    return fig
+
+
+_TL_PALETTE = ["#0E9F8E", "#D97706", "#6366F1", "#DB2777", "#0EA5E9", "#65A30D", "#9333EA", "#B45309"]
+
+
+def timeline_types(anomalies: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
+    """타임라인 유형 순서(고전력 먼저)와 색. 차트와 범례가 같은 순서·색을 쓴다."""
+
+    types = sorted(dict.fromkeys(a["type"].split("(")[0] for a in anomalies),
+                   key=lambda t: (t != "고전력", t))
+    return types, _TL_PALETTE
+
+
+def timeline_legend_html(anomalies: list[dict[str, Any]]) -> str:
+    """차트 위 범례: 유형 색 칩(건수) + 모양 설명. 줄바꿈되어 겹치지 않는다."""
+
+    from collections import Counter
+
+    types, palette = timeline_types(anomalies)
+    cnt = Counter(a["type"].split("(")[0] for a in anomalies)
+    chips = "".join(
+        f'<span style="display:inline-flex;align-items:center;gap:4px;margin:0 10px 4px 0;'
+        f'font-size:12px;color:#334155;white-space:nowrap">'
+        f'<span style="width:9px;height:9px;border-radius:50%;background:{palette[i % len(palette)]};'
+        f'display:inline-block"></span>{t} {cnt[t]}</span>'
+        for i, t in enumerate(types)
+    )
+    shapes = ('<span style="font-size:11.5px;color:#64748B;white-space:nowrap">'
+              '◆ 5초 고전력 · ● 시간 급변</span>')
+    return f'<div style="display:flex;flex-wrap:wrap;align-items:center;margin:0 0 2px">{chips}{shapes}</div>'

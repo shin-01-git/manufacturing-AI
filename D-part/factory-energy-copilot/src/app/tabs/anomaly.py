@@ -35,7 +35,7 @@ PANEL_METHODS = "an_methods"
 PANEL_EVENTS = "an_events"
 PANEL_DRILL = "an_drill"
 
-ROW_MID_H = 330
+ROW_MID_H = 400
 ROW_LOW_H = 420
 ROW_BOTTOM_H = 270
 
@@ -88,65 +88,112 @@ def render(
             )
         return
 
-    # In-page filters: equipment multiselect + type pills (v3 §7). Options come from data.
+    # 설비 선택(비우면 전체)
     module_ids = [r["module"] for r in status.get("modules", [])]
     chosen = st.multiselect(
         "설비 선택 (비우면 전체)", options=module_ids, default=[], key="an_modules", placeholder="전체"
     )
     selected_modules = chosen or None
 
-    options = page_logic.anomaly_type_options(events)
-    raw_type = None
-    if options:
-        labels = {"전체": None, **{f"{o['label']} ({fmt.fmt_count(o['count'])})": o["type"] for o in options}}
-        with st.container(key="typepills"):
-            pick = st.pills(
-                "이상 유형", options=list(labels), default="전체", selection_mode="single",
-                key="an_type", label_visibility="collapsed",
-            )
-        raw_type = labels.get(pick or "전체")
+    # 이상치 = C파트 5초 고전력(2.9σ 기본) + 시간 단위 급변 — 이 페이지의 모든 숫자가 이 목록 하나를 쓴다
+    k_lab = st.session_state.get("cpart_k") or f"{config.CPART_Z_DEFAULT:g}σ"
+    cpart_k = float(str(k_lab).rstrip("σ"))
+    d0, d1 = (date_range[0], date_range[1]) if date_range else (None, None)
+    anomalies = page_logic.unified_anomalies(pattern, cpart, start=d0, end=d1, cpart_k=cpart_k,
+                                             modules=selected_modules)
+    st_status = ui_logic.filter_status_by_modules(status, selected_modules)
+    rows = page_logic.unified_status(st_status, anomalies)
 
-    status = ui_logic.filter_status_by_modules(status, selected_modules)
-    events = ui_logic.filter_events_by_modules(events, selected_modules)
-    trend = ui_logic.filter_trend_by_modules(trend, selected_modules)
-    if date_range:
-        events = ui_logic.filter_events_by_date(events, date_range[0], date_range[1])
-    events = page_logic.filter_events_by_type(events, raw_type)
-    trend = page_logic.filter_trend_by_type(trend, raw_type)
+    _render_unified_summary(st, rows, anomalies, date_range, cpart_k)
 
-    # 상태표·상단 카드가 같은 기간·유형 기준이 되도록 설비별 건수/비율/상태를 다시 계산
-    status = page_logic.status_for_period(
-        status, events, features, pattern,
-        date_range[0] if date_range else None, date_range[1] if date_range else None,
-    )
-    pattern_in_range = _pattern_in_range(pattern, date_range)
-    model = ui_logic.anomaly_tab_model(status, events, trend)
-
-    _render_summary(st, status, model, pattern_in_range, raw_type, date_range)
-
-    merged_settings = page_logic.merged_settings(settings)
-    status_col, heat_col = st.columns([1.65, 1])
-    selected = None
+    status_col, tl_col = st.columns([1.35, 1])
     with status_col:
-        selected = _render_status_table(st, model, trend)
-    with heat_col:
-        _render_detection_timeline(
-            st, hourly_frame or {}, raw_type, date_range, merged_settings, artifacts_dir
-        )
+        _render_unified_status_table(st, rows)
+    with tl_col:
+        with components.panel(height=ROW_MID_H, key=PANEL_HEATMAP):
+            st.markdown(
+                components.panel_header("이상치 타임라인", icon_name="chart", tone="anomaly",
+                                        desc="언제 · 어느 설비 · 무슨 유형"),
+                unsafe_allow_html=True,
+            )
+            order = [r["module"] for r in rows]
+            if anomalies:
+                st.markdown(charts.timeline_legend_html(anomalies), unsafe_allow_html=True)
+            st.plotly_chart(
+                charts.unified_timeline(anomalies, order, height=theme.chart_height(ROW_MID_H) - 44),
+                width="stretch", config=charts.PLOTLY_CONFIG,
+            )
 
-    _render_reasons(st, model)
     _render_pattern_panel(st, pattern or {"error": "not_found"})
     _render_cpart_panel(st, cpart or {"error": "not_found"}, date_range)
 
-    # 경영진 view: summary only (KPI + 상태표 + 타임라인); detail panels are for the
-    # facility / energy roles.
     if not page_logic.role_profile(role)["anomaly_detail"]:
-        st.caption("경영진 보기: 요약만 표시합니다. 이벤트 로그·방법 비교·설비 상세는 담당자 역할에서 확인하세요.")
         return
 
-    # 방법 비교·이벤트 로그(5초 기준 미달 원본 목록)는 거짓 양성 위주라 화면에서 뺐다(10/16 피드백).
+    # 참고: 5초 3상 기준 미달(저전압·저역률) 기록 — 거짓 양성이 많아 이상치·경고·상태에는 쓰지 않는다
+    with st.expander("참고 · 5초 3상 기준 미달 기록 (이상치 아님)"):
+        events = ui_logic.filter_events_by_modules(events, selected_modules)
+        if date_range:
+            events = ui_logic.filter_events_by_date(events, date_range[0], date_range[1])
+        model = ui_logic.anomaly_tab_model(ui_logic.filter_status_by_modules(status, selected_modules), events, trend)
+        _render_reasons(st, model)
 
-    _render_drilldown(st, status, trend, selected, artifacts_dir)
+
+def _render_unified_summary(st, rows, anomalies, date_range, cpart_k) -> None:
+    n_alert = sum(1 for r in rows if r["status"] == "이상")
+    n_watch = sum(1 for r in rows if r["status"] == "주의")
+    n_c = sum(1 for a in anomalies if a["source"] == page_logic.SOURCE_CPART)
+    n_s = len(anomalies) - n_c
+    period = (f"{date_range[0]} – {date_range[1]}" if date_range and date_range[0] and date_range[1]
+              else "전체 기간")
+    cards = [
+        components.kpi_tile("이상치", f"{len(anomalies)}건", sub=f"{period} · 설비 {len({a['module'] for a in anomalies})}대",
+                            tone="anomaly", compact=True),
+        components.kpi_tile("이상 · 주의 설비", f"{n_alert} · {n_watch}",
+                            sub=f"이상치 {config.STATUS_ALERT_PATTERN_COUNT}건↑ 이상 · "
+                                f"{config.STATUS_WATCH_PATTERN_COUNT}건↑ 주의", compact=True),
+        components.kpi_tile("탐지 출처", f"{n_c} · {n_s}",
+                            sub=f"5초 고전력(z ≥ {cpart_k:g}) · 시간 급변(±{config.DEFAULT_ANOMALY_K:g}σ)",
+                            compact=True),
+        components.kpi_tile("발견 설비", f"{len(rows)} / {config.MODULE_COUNT_EXPECTED}",
+                            sub="데이터에 기록된 설비", compact=True),
+    ]
+    for col, card in zip(st.columns(4), cards):
+        col.markdown(card, unsafe_allow_html=True)
+
+
+def _render_unified_status_table(st, rows) -> None:
+    with components.panel(height=ROW_MID_H, key=PANEL_STATUS):
+        st.markdown(
+            components.panel_header("설비 상태표", icon_name="grid", desc="이상치 = 5초 고전력 + 시간 급변"),
+            unsafe_allow_html=True,
+        )
+        if not rows:
+            st.markdown(components.empty_state(tools_mod.MODULE_STATUS_NAME), unsafe_allow_html=True)
+            return
+        table = [
+            {
+                "설비": r["module"],
+                "상태": components.status_text(r["status"]),
+                "이상치(건)": r["total"],
+                "5초 고전력": r["cpart"],
+                "시간 급변": r["sudden"],
+                "주요 유형": r["main_type"] or "—",
+                "최근 이상": r["last"][5:] if r["last"] else "—",
+            }
+            for r in rows
+        ]
+        import streamlit as _st
+
+        top = max((r["total"] for r in rows), default=1) or 1
+        st.dataframe(
+            table, width="stretch", hide_index=True, height=theme.chart_height(ROW_MID_H, has_caption=True),
+            column_config={"이상치(건)": _st.column_config.ProgressColumn(
+                "이상치(건)", min_value=0, max_value=top, format="%d")},
+        )
+        st.caption(f"상태: 이상치 {config.STATUS_ALERT_PATTERN_COUNT}건 이상 = 이상, "
+                   f"{config.STATUS_WATCH_PATTERN_COUNT}–{config.STATUS_ALERT_PATTERN_COUNT - 1}건 = 주의. "
+                   "설비당 평균 약 4건이라 설비 간 차이는 크지 않습니다.")
 
 
 PATTERN_TYPES = ["abnormal_pattern", "night_operation", "load_imbalance",

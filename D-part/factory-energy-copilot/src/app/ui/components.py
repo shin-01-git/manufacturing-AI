@@ -398,7 +398,7 @@ def alert_strip(
     if interval_count:
         parts.append(f"예측구간 이탈 {interval_count}시간")
     if pattern_count:
-        parts.append(f"이상 6종 탐지 {pattern_count}건")
+        parts.append(f"이상치 {pattern_count}건")
     if surge_count:
         parts.append(f"이상 급증 설비 {surge_count}대")
     if not parts:

@@ -246,7 +246,7 @@ def main() -> None:
     )
     alerts = page_logic.build_alerts(
         bundle["actual_vs_pred"], bundle["forecast"], bundle["trend"], settings,
-        start=a_start, end=a_end, pattern=pattern,
+        start=a_start, end=a_end, pattern=pattern, cpart=bundle.get("cpart"),
     )
 
     filters = _render_header(page, period, alerts)
@@ -258,6 +258,7 @@ def main() -> None:
         "start": filters["start"],
         "end": filters["end"],
         "pattern": pattern,
+        "cpart": bundle.get("cpart"),
     }
 
     if page == page_logic.PAGE_HOME:

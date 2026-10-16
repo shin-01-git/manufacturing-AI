@@ -335,6 +335,7 @@ def build_alerts(
     end: Any = None,
     pattern: dict[str, Any] | None = None,
     include_surge: bool = False,
+    cpart: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Alert items + counts for the strip / bell / panel.
 
@@ -372,6 +373,20 @@ def build_alerts(
                 "sort": moment or datetime.min,
             })
             pattern_count += 1
+    # C파트 5초 고전력(2.9σ) — 이상치 통합 정의의 다른 절반
+    for ev in (cpart or {}).get("events", []) if cpart and "error" not in cpart else []:
+        if float(ev.get("z", 0)) < float(config.CPART_Z_DEFAULT):
+            continue
+        moment = _row_dt(str(ev["time"])[:19])
+        tags = "·".join(ev.get("conditions") or [])
+        items.append({
+            "level": "warn", "kind": "cpart",
+            "title": f"5초 고전력 · {ev['module']}",
+            "evidence": f"유효전력 {ev['power_w']:,.0f}W (z {ev['z']:.2f})" + (f" · {tags}" if tags else ""),
+            "time": moment.strftime("%y-%m-%d %H:%M") if moment else "",
+            "sort": moment or datetime.min,
+        })
+        pattern_count += 1
 
     if "error" in forecast:
         errors.append("predictions.csv")
@@ -1453,3 +1468,82 @@ def detect_sudden(features: Any, *, k: float = 3.5, night_hours: set[int] | None
         _SUDDEN_CACHE.clear()
     _SUDDEN_CACHE[key] = out
     return out
+
+
+# ---------------------------------------------------------------------------
+# 이상치 통합 정의 (10/16 최종): 이상치 = C파트 5초 고전력(robust z ≥ 2.9) + 시간 단위 급변(±kσ)
+# 상태표·타임라인·카드·경고가 모두 이 목록 하나를 쓴다.
+# ---------------------------------------------------------------------------
+SOURCE_CPART = "5초 고전력"
+SOURCE_SUDDEN = "시간 급변"
+
+
+def unified_anomalies(
+    pattern: dict[str, Any] | None,
+    cpart: dict[str, Any] | None,
+    *,
+    start: Any = None,
+    end: Any = None,
+    cpart_k: float | None = None,
+    modules: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """두 탐지 결과를 하나의 이상치 목록으로. 항목: module, time(YYYY-MM-DD HH:MM), source, type, detail."""
+
+    s, e = to_date(start), to_date(end)
+    k = float(config.CPART_Z_DEFAULT if cpart_k is None else cpart_k)
+    out: list[dict[str, Any]] = []
+    for ev in (pattern or {}).get("events", []) if pattern and "error" not in pattern else []:
+        t = str(ev.get("hour", ""))[:16]
+        d = to_date(t[:10])
+        if d is None or not _in_range(d, s, e):
+            continue
+        base = float(ev.get("baseline") or 0.0)
+        val = float(ev.get("value") or 0.0)
+        unit = ev.get("unit", "")
+        out.append({
+            "module": ev["module"], "time": t, "source": SOURCE_SUDDEN, "type": type_label(ev["type"]),
+            "detail": (f"{PATTERN_METRIC.get(ev.get('metric'), ev.get('metric'))} {val:,.1f}{unit} "
+                       f"(평균 {base:,.1f}{unit}, {(val - base) / base * 100 if base else 0:+.1f}%)"),
+        })
+    for ev in (cpart or {}).get("events", []) if cpart and "error" not in cpart else []:
+        if float(ev.get("z", 0)) < k:
+            continue
+        t = str(ev["time"])[:16]
+        d = to_date(t[:10])
+        if d is None or not _in_range(d, s, e):
+            continue
+        tags = ev.get("conditions") or []
+        out.append({
+            "module": ev["module"], "time": t, "source": SOURCE_CPART,
+            "type": "고전력" + (f"({'·'.join(tags)})" if tags else ""),
+            "detail": f"유효전력 {ev['power_w']:,.0f}W · z {ev['z']:.2f} · 무효전력 {ev['reactive_var']:,.0f}var",
+        })
+    if modules:
+        keep = set(modules)
+        out = [x for x in out if x["module"] in keep]
+    return sorted(out, key=lambda x: x["time"])
+
+
+def unified_status(status: dict[str, Any], anomalies: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """설비별 이상치 집계 + 상태(이상 ≥ STATUS_ALERT_PATTERN_COUNT, 주의 ≥ STATUS_WATCH_PATTERN_COUNT)."""
+
+    from collections import Counter
+
+    from src.agent import tools as tools_mod
+
+    rows = []
+    for r in status.get("modules", []) if "error" not in status else []:
+        m = r["module"]
+        mine = [a for a in anomalies if a["module"] == m]
+        types = Counter(a["type"].split("(")[0] for a in mine)
+        rows.append({
+            "module": m,
+            "status": tools_mod.module_status_label(0.0, len(mine)),
+            "total": len(mine),
+            "cpart": sum(1 for a in mine if a["source"] == SOURCE_CPART),
+            "sudden": sum(1 for a in mine if a["source"] == SOURCE_SUDDEN),
+            "main_type": types.most_common(1)[0][0] if types else "",
+            "last": max((a["time"] for a in mine), default=""),
+        })
+    order = {"이상": 0, "주의": 1, "정상": 2}
+    return sorted(rows, key=lambda x: (order.get(x["status"], 3), -x["total"], x["module"]))

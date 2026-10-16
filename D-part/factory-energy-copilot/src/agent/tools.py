@@ -309,8 +309,12 @@ def get_module_status(*, artifacts_dir: Path | None = None) -> dict[str, Any]:
 
     pattern_counts: dict[str, int] = {}
     if config.STATUS_THRESHOLDS_APPROVED:
+        # 이상치 = 시간 급변(pattern) + C파트 5초 고전력(2.9σ)
         pat = get_pattern_anomalies(artifacts_dir=artifacts_dir)
         for ev in pat.get("events", []) if "error" not in pat else []:
+            pattern_counts[ev["module"]] = pattern_counts.get(ev["module"], 0) + 1
+        cp = get_cpart_anomalies(artifacts_dir=artifacts_dir)
+        for ev in cp.get("events", []) if "error" not in cp else []:
             pattern_counts[ev["module"]] = pattern_counts.get(ev["module"], 0) + 1
 
     modules: list[dict[str, Any]] = []

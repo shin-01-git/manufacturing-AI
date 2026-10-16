@@ -282,8 +282,9 @@ def build_briefing(
         from collections import Counter
 
         by_type = Counter(tools_mod_type_label(e["type"]) for e in pattern["events"])
-        k = pattern["count"]
-        k_s = calc.add("이상 6종 탐지", f"{k}건", PAT)
+        cp = tools_mod.get_cpart_anomalies(artifacts_dir=artifacts_dir)
+        k = pattern["count"] + (cp["count"] if "error" not in cp else 0)
+        k_s = calc.add("이상치(시간 급변 + 5초 고전력)", f"{k}건", PAT)
         k_detail = " · ".join(
             f"{t} {calc.add(f'이상 6종 {t}', str(n), PAT)}" for t, n in by_type.most_common()
         )
@@ -409,7 +410,7 @@ def build_briefing(
         n_watch_f = sum(1 for r in rows_s if r.get("status") == "주의")
         a_s = calc.add("이상 설비", f"{n_alert}대", STAT) if rows_s else NO_DATA
         w_s = calc.add("주의 설비", f"{n_watch_f}대", STAT) if rows_s else NO_DATA
-        headline = [("이상 6종 탐지", k_s), ("이상 설비", a_s), ("주의 설비", w_s)]
+        headline = [("이상치", k_s), ("이상 설비", a_s), ("주의 설비", w_s)]
         lines.append(watch_line("점검 우선"))
         lines.append(BriefLine("유형별 건수", k_detail if p_ok and k_detail else NO_DATA, sources=[PAT]))
         if p_ok and pattern["events"]:
@@ -428,7 +429,7 @@ def build_briefing(
         k_txt = calc.add("탐지 기준", f"{config.DEFAULT_ANOMALY_K:g}σ", "config")
         lines.append(BriefLine(
             "판정 기준",
-            f"설비별 전체 평균 ±{k_txt} 밖이면서 직전 시간 대비 급변한 시간만 이상으로 봅니다.",
+            f"이상치 = 5초 고전력(C파트, z ≥ {calc.add('C파트 기준', f'{config.CPART_Z_DEFAULT:g}', 'config')}) + 시간 급변(전체 평균 ±{k_txt} 밖 + 직전 시간 대비 급변).",
             sources=[PAT]))
 
     limits = [

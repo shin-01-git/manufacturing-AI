@@ -258,7 +258,9 @@ def answer(question: str, *, artifacts_dir: Path | None = None) -> dict[str, Any
         watch = [r["module"] for r in rows if r["status"] == "주의"]
         lines = [
             "관찰된 사실",
-            f"- 급격한 변화 탐지 {len(evs)}건 (12/01–04/29, 설비별 전체 평균 ±{config.DEFAULT_ANOMALY_K:g}σ 밖 + 직전 시간 대비 급변)",
+            (f"- 이상치 {len(evs) + (cp0['count'] if 'error' not in (cp0 := tools_mod.get_cpart_anomalies(artifacts_dir=artifacts_dir)) else 0)}건 "
+             f"= 시간 급변 {len(evs)}건 + 5초 고전력 {cp0.get('count', 0) if 'error' not in cp0 else 0}건 (12/01–04/29)"),
+            f"- 시간 급변: 설비별 전체 평균 ±{config.DEFAULT_ANOMALY_K:g}σ 밖 + 직전 시간 대비 급변",
             "- 유형: " + " · ".join(f"{t} {n}" for t, n in by_type.most_common()),
             f"- 점검 우선: 이상 {', '.join(alert) or '없음'} / 주의 {len(watch)}대",
             "- 설비별 상위: " + " · ".join(f"{m} {n}건" for m, n in by_mod.most_common(3)),

@@ -76,7 +76,7 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> None:
         "label": picked["label"] if picked else "선택 기간 전체",
         "alerts": page_logic.build_alerts(
             bundle["actual_vs_pred"], bundle["forecast"], bundle["trend"], settings,
-            start=k_start, end=k_end, pattern=ctx.get("pattern"),
+            start=k_start, end=k_end, pattern=ctx.get("pattern"), cpart=ctx.get("cpart"),
         ),
         "delta": (_prev_window_delta(rows, picked) if unit == "시간"
                   else _prev_period_delta(rows, unit, options, picked, settings)) if picked else None,
@@ -242,10 +242,14 @@ def _picked_period(st, rows, unit, start, end):
     return options, options[next((i for i, o in enumerate(options) if not o["partial"]), 0)]
 
 
-def _watch_modules(pattern) -> int:
+def _unified(ctx) -> list:
+    return page_logic.unified_anomalies(ctx.get("pattern"), ctx.get("cpart"))
+
+
+def _watch_modules(ctx) -> int:
     from collections import Counter
 
-    c = Counter(e["module"] for e in (pattern or {}).get("events", []))
+    c = Counter(a["module"] for a in _unified(ctx))
     return sum(1 for n in c.values() if n >= config.STATUS_WATCH_PATTERN_COUNT)
 
 
@@ -372,13 +376,13 @@ def _render_kpis(st, bundle, ctx, forecast_ok, totals, buckets, unit, profile, k
             sub=f"{hist} 관측 · 평소의 {settings['anomaly_surge_factor']:g}배 이상", icon_name="pulse",
         ),
         "sudden": components.kpi_tile(
-            "이상 탐지(급변)", f"{len((ctx.get('pattern') or {}).get('events', []))}건",
-            sub=f"{hist} · 평균 ±{float(settings['anomaly_k']):g}σ 밖 + 급격한 변화",
+            "이상치", f"{len(_unified(ctx))}건",
+            sub=f"{hist} · 5초 고전력 + 시간 급변",
             icon_name="anomaly", tone="anomaly",
         ),
         "watchmods": components.kpi_tile(
-            "점검 필요 설비", f"{_watch_modules(ctx.get('pattern'))}대",
-            sub=f"급변 {config.STATUS_WATCH_PATTERN_COUNT}건 이상 설비 (이상 ≥ {config.STATUS_ALERT_PATTERN_COUNT}건)",
+            "점검 필요 설비", f"{_watch_modules(ctx)}대",
+            sub=f"이상치 {config.STATUS_WATCH_PATTERN_COUNT}건 이상 (이상 ≥ {config.STATUS_ALERT_PATTERN_COUNT}건)",
             icon_name="alert_sq",
         ),
         "found": components.kpi_tile(
@@ -538,7 +542,7 @@ def _merge_rows(rows: list[dict[str, Any]], avp: dict[str, Any]) -> list[dict[st
 def _render_alert_panel(st, alerts: dict[str, Any]) -> None:
     with components.panel(height=H_MAIN, key=PANEL_ALERTS):
         st.markdown(
-            components.panel_header("경고 목록", icon_name="bell", desc="이상 6종 · 급증"),
+            components.panel_header("경고 목록", icon_name="bell", desc="이상치 (5초 고전력 · 시간 급변)"),
             unsafe_allow_html=True,
         )
         if alerts["errors"]:
@@ -550,7 +554,7 @@ def _render_alert_panel(st, alerts: dict[str, Any]) -> None:
         if not alerts["items"]:
             st.markdown('<div class="fec-calm">해당 기간 경고 없음</div>', unsafe_allow_html=True)
             return
-        st.caption(f"총 {len(alerts['items'])}건 · 이상 6종(급변) 최근 것부터 · 패널 안에서 스크롤")
+        st.caption(f"총 {len(alerts['items'])}건 · 최근 것부터 · 패널 안에서 스크롤")
         # 수십 건을 st.markdown 하나씩 그리면 요소가 그만큼 늘어 느려진다 → 한 블록으로.
         st.markdown(
             "".join(
