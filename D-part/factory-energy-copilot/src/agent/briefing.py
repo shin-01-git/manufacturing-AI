@@ -429,7 +429,7 @@ def build_briefing(
         k_txt = calc.add("탐지 기준", f"{config.DEFAULT_ANOMALY_K:g}σ", "config")
         lines.append(BriefLine(
             "판정 기준",
-            f"이상치 = 5초 고전력(C파트, z ≥ {calc.add('C파트 기준', f'{config.CPART_Z_DEFAULT:g}', 'config')}) + 시간 급변(전체 평균 ±{k_txt} 밖 + 직전 시간 대비 급변).",
+            f"이상치 = 5초 고전력(z ≥ {calc.add('5초 고전력 기준', f'{config.CPART_Z_DEFAULT:g}', 'config')}) + 시간 급변(전체 평균 ±{k_txt} 밖 + 직전 시간 대비 급변).",
             sources=[PAT]))
 
     limits = [

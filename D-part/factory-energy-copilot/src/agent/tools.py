@@ -493,7 +493,7 @@ def openai_tool_schemas() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "get_cpart_anomalies",
-                "description": "C파트(이상치 담당) 탐지 결과: 5초 원본 유효전력이 전체 중앙값 대비 robust z ≥ 2.9(기본, 24건)인 레코드와 조건 태그(무효전력 급증·야간 이상가동 등). z_min 2.92면 6건",
+                "description": "5초 고전력 탐지 결과: 5초 원본 유효전력이 전체 중앙값 대비 robust z ≥ 2.9(기본, 24건)인 레코드와 조건 태그(무효전력 급증·야간 이상가동 등). z_min 2.92면 6건",
                 "parameters": {"type": "object", "properties": {"z_min": {"type": "number", "enum": [2.88, 2.9, 2.92]}}},
             },
         },

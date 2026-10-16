@@ -187,7 +187,7 @@ def answer(question: str, *, artifacts_dir: Path | None = None) -> dict[str, Any
             cp_m = [c for c in cp.get("events", []) if c["module"] == m] if "error" not in cp else []
             if cp_m:
                 tags = Counter(t for c in cp_m for t in c["conditions"])
-                lines.append(f"  - C파트 탐지(5초 고전력 2.9σ): {len(cp_m)}건, 최고 {max(c['power_w'] for c in cp_m):,.0f}W"
+                lines.append(f"  - 5초 고전력 탐지(2.9σ): {len(cp_m)}건, 최고 {max(c['power_w'] for c in cp_m):,.0f}W"
                              + (f" · {' · '.join(f'{t} {n}' for t, n in tags.most_common())}" if tags else ""))
             if row.get("anomaly_count"):
                 lines.append(f"  - 참고: 5초 순간 기준 미달 {row['anomaly_count']:,}행(비율 {row['anomaly_ratio'] * 100:.2f}%) — 경고 기준 아님")
@@ -264,7 +264,7 @@ def answer(question: str, *, artifacts_dir: Path | None = None) -> dict[str, Any
             "- 유형: " + " · ".join(f"{t} {n}" for t, n in by_type.most_common()),
             f"- 점검 우선: 이상 {', '.join(alert) or '없음'} / 주의 {len(watch)}대",
             "- 설비별 상위: " + " · ".join(f"{m} {n}건" for m, n in by_mod.most_common(3)),
-            *([f"- C파트 탐지(5초 고전력 2.9σ): {cp['count']}건, 상위 "
+            *([f"- 5초 고전력 탐지(2.9σ): {cp['count']}건, 상위 "
                + " · ".join(f"{m} {n}건" for m, n in Counter(c['module'] for c in cp['events']).most_common(3))]
               if "error" not in (cp := tools_mod.get_cpart_anomalies(artifacts_dir=artifacts_dir)) else []),
             "가능한 원인 후보",

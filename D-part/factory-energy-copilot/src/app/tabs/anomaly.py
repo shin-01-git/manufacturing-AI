@@ -214,8 +214,8 @@ def _render_pattern_panel(st, pattern: dict[str, Any]) -> None:
     with components.panel(key="an_pattern"):
         head_l, head_r = st.columns([3, 2], vertical_alignment="center")
         head_l.markdown(
-            components.panel_header("이상 6종 탐지", icon_name="anomaly", tone="anomaly",
-                                    desc="전체 평균 범위 이탈 + 급격한 변화만"),
+            components.panel_header("시간 급변 탐지", icon_name="anomaly", tone="anomaly",
+                                    desc="1시간 집계 · 설비 평균 범위 이탈 + 직전 시간 대비 급변 (6종)"),
             unsafe_allow_html=True,
         )
         if "error" in pattern:
@@ -272,8 +272,8 @@ def _render_cpart_panel(st, cpart: dict[str, Any], date_range=None) -> None:
     with components.panel(key="an_cpart"):
         head_l, head_r = st.columns([3, 2], vertical_alignment="center")
         head_l.markdown(
-            components.panel_header("C파트 탐지 결과", icon_name="anomaly", tone="anomaly",
-                                    desc="5초 원본 · 전체 중앙값 대비 고전력 (2.9σ 기본)"),
+            components.panel_header("5초 고전력 탐지", icon_name="anomaly", tone="anomaly",
+                                    desc="5초 측정값 · 전체 중앙값 대비 robust z 기준"),
             unsafe_allow_html=True,
         )
         if "error" in cpart:
@@ -322,7 +322,7 @@ def _render_cpart_panel(st, cpart: dict[str, Any], date_range=None) -> None:
         st.caption(
             f"판정: 5초 원본 유효전력 robust z = 0.6745×(값−중앙값 3,009.85W)/MAD 506.04 ≥ {k:g} "
             f"(≈{3009.85 + k / 0.6745 * 506.04:,.0f}W 이상) · 3,369만 행 중 {len(evs)}건. "
-            "C파트 합의 기준 2.9σ(24건) 또는 2.92σ(6건), 3.0σ는 데이터 최댓값(5,221W)을 넘어 0건. "
+            "팀 합의 기준 2.9σ(24건)·2.92σ(6건). 3.0σ는 기준(≈5,260W)이 데이터 최댓값(5,221W)보다 커서 0건. "
             "조건 태그 — 무효전력 급증 ≥ 750 var, 야간 이상가동 = 19–09시 + 5,000 W 초과."
         )
 
