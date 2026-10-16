@@ -100,7 +100,7 @@ def render(bundle: dict[str, Any], ctx: dict[str, Any]) -> None:
     panels = {
         "period": lambda: _render_period_panel(st, rows, unit, start, end, forecast_ok),
         "cost": lambda: _render_cost_panel(st, totals, settings, forecast_ok),
-        "report": lambda: _render_report_panel(st, bundle, totals, settings, ctx),
+        "report": lambda: _render_report_panel(st, bundle, totals, settings, ctx, rows),
         "top_modules": lambda: _render_top_modules_panel(st, bundle, ctx),
     }
     row3 = [k for k in profile["home_row3"] if k != "period"]  # 기간 합계는 예측 패널 보기로 통합
@@ -697,7 +697,7 @@ def _render_cost_panel(st, totals, settings, forecast_ok) -> None:
         st.caption(cap)
 
 
-def _render_report_panel(st, bundle, totals, settings, ctx=None) -> None:
+def _render_report_panel(st, bundle, totals, settings, ctx=None, rows=None) -> None:
     status = bundle["module_status"]
     evaluation = bundle["evaluation"]
     with components.panel(height=H_BOTTOM, key=PANEL_REPORT):
@@ -727,10 +727,62 @@ def _render_report_panel(st, bundle, totals, settings, ctx=None) -> None:
         else:
             lines.append("탐지된 이상치가 없습니다.")
         st.markdown(components.ai_card_lines(lines), unsafe_allow_html=True)
-        st.button(
-            "AI Copilot에서 열기 ›", key="open_copilot", type="tertiary",
-            on_click=nav.go, args=(page_logic.PAGE_COPILOT,),
+        is_energy = (ctx or {}).get("role") == page_logic.ROLE_ENERGY
+        if is_energy and rows:
+            # 에너지 관리 담당자: 예측 기간 전체 AI 보고서(HTML). 누를 때만 생성(LLM 호출 포함).
+            b_col, l_col = st.columns([1.3, 1], vertical_alignment="center")
+            b_col.download_button(
+                "AI 보고서 다운로드", data=_report_callable(bundle, ctx, rows, settings),
+                file_name=f"energy_report_{(ctx or {}).get('start')}_{(ctx or {}).get('end')}.html",
+                mime="text/html", icon=":material/download:", key="dl_energy_report",
+                on_click="ignore", width="stretch",
+                help="예측 기간 요약·검토 의견·일별 예측·시간대 분석·모델 근거·이상치 요약. "
+                     "브라우저에서 열고 인쇄하면 PDF로 저장됩니다.",
+            )
+            l_col.button("AI Copilot에서 열기 ›", key="open_copilot", type="tertiary",
+                         on_click=nav.go, args=(page_logic.PAGE_COPILOT,))
+        else:
+            st.button(
+                "AI Copilot에서 열기 ›", key="open_copilot", type="tertiary",
+                on_click=nav.go, args=(page_logic.PAGE_COPILOT,),
+            )
+
+
+def _report_callable(bundle, ctx, rows, settings):
+    """다운로드 클릭 때 실행할 보고서 생성 함수(인자 없는 callable)."""
+
+    from collections import Counter
+
+    from src.agent import report as report_mod
+
+    start, end = (ctx or {}).get("start"), (ctx or {}).get("end")
+    s, e = page_logic.to_date(start), page_logic.to_date(end)
+    in_rows = [r for r in rows
+               if (d := page_logic._row_dt(r.get("id", ""))) is not None
+               and (s is None or d.date() >= s) and (e is None or d.date() <= e)] or list(rows)
+    anomalies = _unified(ctx or {})
+    sources = dict(Counter(a["source"] for a in anomalies))
+    status_rows = _status_rows(ctx or {})
+    settings_copy = dict(settings)
+    evaluation, selection = bundle.get("evaluation") or {}, bundle.get("selection") or {}
+
+    def make() -> bytes:
+        interval: dict = {}
+        try:
+            import json
+
+            path = config.ARTIFACTS_DIR / "forecast_bpart_interval.json"
+            if path.exists():
+                interval = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            interval = {}
+        html = report_mod.build_energy_report(
+            in_rows, settings_copy, evaluation=evaluation, selection=selection, interval=interval,
+            status_rows=status_rows, anomaly_sources=sources,
         )
+        return html.encode("utf-8")
+
+    return make
 
 
 def _render_top_modules_panel(st, bundle, ctx=None) -> None:
